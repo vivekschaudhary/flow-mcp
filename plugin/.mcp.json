@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flow": {
+      "type": "http",
+      "url": "https://mcp.kindtree.us/api/mcp"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "flow-marketplace",
+  "owner": {
+    "name": "Vivek Chaudhary",
+    "email": "vivek@flow.dev",
+    "url": "https://flow.dev"
+  },
+  "plugins": [
+    {
+      "name": "flow",
+      "source": "./plugin",
+      "description": "Integration OS for AI-built software. Claude calls Flow to set up Google OAuth, Stripe, Twilio, Resend silently — credentials never touch the developer's codebase.",
+      "homepage": "https://flow.dev",
+      "license": "MIT",
+      "keywords": [
+        "mcp",
+        "integrations",
+        "oauth",
+        "credentials",
+        "developer-experience"
+      ]
+    }
+  ]
+}

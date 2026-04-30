@@ -1,0 +1,191 @@
+{
+  "id": "google-oauth-web",
+  "name": "Google OAuth — Web Application",
+  "version": "1.0.0",
+  "created_at": "2026-04-26",
+  "verified_at": "2026-04-26",
+  "verified_by": "vivek@flow.dev",
+  "confidence": 1.0,
+  "estimated_time_expert": "2 minutes",
+  "estimated_time_first_timer": "25 minutes",
+  "provider": "google",
+  "platform": "web",
+  "credentials_emitted": [
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "description": "OAuth client identifier",
+      "format": "numeric-string.apps.googleusercontent.com",
+      "required": true,
+      "source": "downloaded JSON → client_id field"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "description": "OAuth client secret",
+      "format": "GOCSPX-...",
+      "required": true,
+      "source": "downloaded JSON → client_secret field"
+    }
+  ],
+  "prerequisites": [
+    {
+      "id": "gcp-project",
+      "description": "A Google Cloud Project must exist",
+      "check": "Have you created a GCP project?",
+      "if_missing": "Go to console.cloud.google.com → New Project"
+    },
+    {
+      "id": "consent-screen",
+      "description": "OAuth consent screen must be configured BEFORE creating credentials",
+      "check": "Have you configured the OAuth consent screen?",
+      "if_missing": "Configure consent screen first",
+      "gotcha": true,
+      "url": "https://console.cloud.google.com/apis/credentials/consent"
+    },
+    {
+      "id": "privacy-policy",
+      "description": "Privacy Policy URL required on consent screen",
+      "check": "Do you have a /privacy page or URL?",
+      "if_missing": "Create a basic /privacy page — Google requires it"
+    }
+  ],
+  "steps": [
+    {
+      "id": "navigate-credentials",
+      "type": "navigate",
+      "title": "Go to Google Cloud Credentials",
+      "url": "https://console.cloud.google.com/apis/credentials",
+      "notes": "Make sure you are in the correct GCP project — check project name in the top bar"
+    },
+    {
+      "id": "create-client",
+      "type": "action",
+      "title": "Create OAuth Client ID",
+      "instruction": "Click 'Create Credentials' → select 'OAuth client ID'",
+      "notes": "If you see a consent screen warning — stop and configure it first"
+    },
+    {
+      "id": "select-type",
+      "type": "select",
+      "title": "Select Web Application",
+      "instruction": "Set Application type to 'Web application'",
+      "warning": "Do NOT select Desktop app or TV — wrong credential type for web"
+    },
+    {
+      "id": "name",
+      "type": "input",
+      "title": "Name your OAuth client",
+      "instruction": "Enter a name — e.g. 'MyApp Web Client'",
+      "notes": "Internal only — users never see this"
+    },
+    {
+      "id": "javascript-origins",
+      "type": "input",
+      "title": "Add Authorized JavaScript Origins",
+      "instruction": "Add both your localhost AND production domain",
+      "values": [
+        "http://localhost:3000",
+        "https://yourdomain.com"
+      ],
+      "common_mistakes": [
+        "Trailing slash — http://localhost:3000/ will fail",
+        "Including a path — origins must be root domain only",
+        "Wrong port — match exactly what your dev server uses"
+      ]
+    },
+    {
+      "id": "redirect-uris",
+      "type": "input",
+      "title": "Add Authorized Redirect URIs",
+      "instruction": "Add callback URLs for your auth library",
+      "library_variants": {
+        "nextauth": [
+          "http://localhost:3000/api/auth/callback/google",
+          "https://yourdomain.com/api/auth/callback/google"
+        ],
+        "clerk": [
+          "https://your-clerk-domain.clerk.accounts.dev/v1/oauth_callback"
+        ],
+        "auth0": [
+          "https://your-tenant.auth0.com/login/callback"
+        ],
+        "custom": [
+          "http://localhost:3000/auth/callback",
+          "https://yourdomain.com/auth/callback"
+        ]
+      },
+      "common_mistakes": [
+        "Trailing slash mismatch",
+        "http vs https mismatch",
+        "Wrong callback path for your auth library"
+      ]
+    },
+    {
+      "id": "create",
+      "type": "action",
+      "title": "Click Create",
+      "instruction": "Click the Create button",
+      "notes": "May take up to 5 minutes. Usually instant."
+    },
+    {
+      "id": "download-json",
+      "type": "capture",
+      "title": "Download credentials JSON",
+      "instruction": "Click 'Download JSON' on the confirmation screen",
+      "notes": "Contains your client_id and client_secret",
+      "credential_paths": {
+        "GOOGLE_CLIENT_ID": "$.web.client_id",
+        "GOOGLE_CLIENT_SECRET": "$.web.client_secret"
+      }
+    }
+  ],
+  "warnings": [
+    {
+      "id": "consent-screen-first",
+      "severity": "blocking",
+      "trigger": "before_start",
+      "message": "Configure the OAuth consent screen BEFORE creating credentials or Google will interrupt you mid-flow."
+    },
+    {
+      "id": "privacy-policy-required",
+      "severity": "blocking",
+      "trigger": "before_start",
+      "message": "Google now requires a Privacy Policy URL on the consent screen. Have your /privacy URL ready."
+    },
+    {
+      "id": "test-mode-limit",
+      "severity": "high",
+      "trigger": "after_complete",
+      "message": "Your app is in test mode — maximum 100 users. Submit for Google verification before launch."
+    },
+    {
+      "id": "verification-time",
+      "severity": "high",
+      "trigger": "before_launch",
+      "days_before": 7,
+      "message": "Google OAuth verification takes 3-5 business days. Submit at least a week before launch."
+    },
+    {
+      "id": "redirect-exact-match",
+      "severity": "high",
+      "trigger": "on_redirect_uri_entry",
+      "message": "Redirect URIs are exact string matches. One wrong character causes redirect_uri_mismatch — hard to debug."
+    }
+  ],
+  "common_errors": [
+    {
+      "error": "redirect_uri_mismatch",
+      "cause": "Redirect URI in code does not exactly match Google Console",
+      "fix": "Check trailing slashes, http vs https, exact path"
+    },
+    {
+      "error": "access_blocked: This app's request is invalid",
+      "cause": "Consent screen not fully configured",
+      "fix": "Complete OAuth consent screen — add Privacy Policy URL"
+    },
+    {
+      "error": "Error 403: access_denied",
+      "cause": "User not in test users list",
+      "fix": "Add email to test users in consent screen settings"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "flow-mcp",
+  "version": "0.1.0",
+  "description": "Flow — integration OS for AI-built software",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "mcp-handler": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}
