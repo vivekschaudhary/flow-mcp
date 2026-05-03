@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "description": "Flow — integration OS for AI-built software",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@upstash/redis": "^1.37.0",
     "mcp-handler": "^1.1.0"
   },
   "devDependencies": {

@@ -213,9 +213,9 @@ Priority 4:  Pusher (16% of repos, zero tooling exists)
 ```
 List the plugin in anthropics/claude-plugins-community
 Install command: /plugin install flow@claude-community
-Hosted MCP server at mcp.kindtree.us (later mcp.flow.dev)
+Hosted MCP server at mcp.kindtree.us
 Shared dev credentials live server-side, never on user disk
-Build flow.dev microsite
+Build kindtree.us microsite (or product subdomain)
   One page, one command, one 60-second demo
 ```
 

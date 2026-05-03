@@ -43,6 +43,7 @@ const handler = createMcpHandler(
     );
   },
   {
+    serverInfo: { name: "flow", version: "0.1.0" },
     capabilities: { tools: {} },
   },
   {

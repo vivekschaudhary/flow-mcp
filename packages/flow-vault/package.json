@@ -1,0 +1,33 @@
+{
+  "name": "flow-vault",
+  "version": "0.1.0",
+  "description": "Invisible credential injection into process.env at runtime. Loaded via node --require. Zero credentials on disk.",
+  "main": "index.js",
+  "type": "commonjs",
+  "files": [
+    "index.js",
+    "keychain.js",
+    "keychain-helper.js",
+    "vault.js",
+    "vault-helper.js",
+    "proxy.js",
+    "detect.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "keytar": "^7.9.0"
+  },
+  "keywords": [
+    "credentials",
+    "secrets",
+    "vault",
+    "env",
+    "preload",
+    "flow"
+  ],
+  "license": "MIT",
+  "author": "Vivek Chaudhary <vivek@kindtree.us>",
+  "homepage": "https://kindtree.us"
+}

@@ -4,6 +4,9 @@
   "functions": {
     "api/mcp.ts": {
       "maxDuration": 300
+    },
+    "api/vault/credentials.ts": {
+      "maxDuration": 10
     }
   }
 }

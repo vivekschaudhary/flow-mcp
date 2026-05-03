@@ -73,4 +73,4 @@ MIT
 
 ## Author
 
-Vivek Chaudhary — [flow.dev](https://flow.dev) — `vivek@flow.dev`
+Vivek Chaudhary — [kindtree.us](https://kindtree.us) — `vivek@kindtree.us`

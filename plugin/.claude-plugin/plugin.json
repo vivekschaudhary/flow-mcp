@@ -3,10 +3,10 @@
   "description": "Integration OS for AI-built software. Claude calls Flow to set up Google OAuth, Stripe, Twilio, Resend silently — credentials never touch the developer's codebase. One install, every project.",
   "author": {
     "name": "Vivek Chaudhary",
-    "email": "vivek@flow.dev",
-    "url": "https://flow.dev"
+    "email": "vivek@kindtree.us",
+    "url": "https://kindtree.us"
   },
-  "homepage": "https://flow.dev",
+  "homepage": "https://kindtree.us",
   "license": "MIT",
   "keywords": [
     "mcp",
