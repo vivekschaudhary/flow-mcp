@@ -10,7 +10,7 @@ How it works: a hosted MCP server holds Flow's shared development credentials an
 
 ## Status
 
-Pre-release. Live: hosted vault + runtime package on npm + MCP tools for Google OAuth dev (`flow_check`, `flow_status`, `flow_setup_oauth(development)`, `flow_status_check`). Coming: production OAuth (`flow_capture`, `flow_setup_oauth(production)`), Stripe + Twilio + Resend playbooks, `flow login` CLI for keychain session. See `CLAUDE.md` for the full roadmap.
+Pre-release. Live: hosted vault + runtime package on npm + MCP tools for both Google OAuth and Resend (email) in development (`flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` alias, `flow_status_check`). Vault endpoint is rate-limited (per-IP and per-install_id). Coming: production credential intake (`flow_capture`, `flow_setup_provider(production)`), more providers (Stripe, Twilio), `flow login` CLI for keychain session. See `CLAUDE.md` for the full roadmap.
 
 ## Quick start (works in any MCP-capable AI tool)
 
@@ -95,16 +95,17 @@ You install the plugin once. The runtime ships with each project that uses it. T
 
 ## What Flow manages
 
-| Integration | Status | Notes |
-|---|---|---|
-| Google OAuth (Web) | Playbook v1.0.0 ready; tool wiring in progress | 8 steps, library variants for nextauth/clerk/auth0/custom |
-| AWS S3 | Planned (v0.2) | File uploads — narrow scope to start |
-| Stripe + Webhooks | Planned (v0.2) | Webhook setup is the real pain point |
-| Auth0 | Planned (v0.2) | 25% of repos surveyed |
-| Pusher | Planned (v0.2) | 16% of repos; no existing tooling |
-| Twilio, Resend, SendGrid | Planned (v0.3+) | API-key shape; lower friction than OAuth |
+| Integration | Provider id | Status | Notes |
+|---|---|---|---|
+| Google OAuth (Web) | `google-oauth-web` | ✅ Live (development only) | Library variants for nextauth/clerk/auth0/custom; multi-port + multi-callback whitelist |
+| Email | `email_provider` | ✅ Live (development only) | Currently Resend under the hood; sends from `onboarding@resend.dev` test domain |
+| AWS S3 | `s3_provider` (planned) | Planned (v0.2) | File uploads — narrow scope to start |
+| Payments | `payments_provider` (planned) | Planned (v0.2) | Likely Stripe; webhook setup is the real pain point |
+| Auth0 | `auth0` (planned) | Planned (v0.2) | 25% of repos surveyed |
+| Realtime | `realtime_provider` (planned) | Planned (v0.2) | Likely Pusher; 16% of repos, no existing tooling |
+| SMS | `sms_provider` (planned) | Planned (v0.3+) | Likely Twilio |
 
-Flow only ships an integration when its playbook is verified end-to-end against the provider's current console UI.
+Flow only ships an integration when its playbook is verified end-to-end against the provider's current console UI. Production credential intake (`flow_capture`, `flow_setup_provider(production)`) is M2.5 — until then, all live integrations work for development only.
 
 ## Components
 
@@ -119,13 +120,14 @@ Flow only ships an integration when its playbook is verified end-to-end against 
 
 | Tool | Status | Purpose |
 |---|---|---|
-| `flow_status_check` | live | Confirms connectivity |
-| `flow_check` | planned (M2) | Status of integrations for this project |
-| `flow_setup_oauth(development)` | planned (M2) | Stores Google dev creds in vault, tells Claude to install flow-vault |
-| `flow_setup_oauth(production)` | planned (M2.5) | Guides user through GCP console, captures downloaded JSON |
-| `flow_capture` | planned (M2.5) | Extracts creds from a downloaded provider JSON |
-| `flow_sync` | planned (M2.5) | Pushes captured creds to deploy platform |
-| `flow_status` | planned (M2) | Full project integration health |
+| `flow_status_check` | ✅ live | Connectivity probe; returns server build state |
+| `flow_check` | ✅ live | Status of integrations for this project; bootstraps `install_id` on first call |
+| `flow_status` | ✅ live | Verbose project health |
+| `flow_setup_provider(development)` | ✅ live | Generic — accepts `provider="google-oauth-web"` or `provider="email_provider"`. Stores shared dev creds in vault, returns runtime install instructions |
+| `flow_setup_oauth(development)` | ✅ live (alias) | Backward-compat alias for `flow_setup_provider(provider="google-oauth-web")` |
+| `flow_setup_provider(production)` | ⏳ planned (M2.5) | Returns "coming soon" today |
+| `flow_capture` | ⏳ planned (M2.5) | Will extract creds from a downloaded provider JSON Claude reads via its Read tool |
+| `flow_sync` | ❌ deprecated | Runtime injection makes env-push obsolete; Flow delivers at app boot, no per-environment push needed |
 
 ## Security model
 

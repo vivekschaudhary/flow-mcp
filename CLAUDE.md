@@ -52,11 +52,16 @@ Flow is two cooperating products that ship as one experience:
 
 | Layer | Status | Detail |
 |---|---|---|
-| Hosted MCP server at `mcp.kindtree.us/api/mcp` | ✅ deployed | Stub tool `flow_status_check` only |
-| Vault endpoint at `mcp.kindtree.us/api/vault/credentials` | ✅ deployed | GET, returns shared dev creds for `env=development` |
-| `flow-vault` runtime npm package | ✅ built + tested | Proven end-to-end on swing-trading 2026-05-03 |
-| Marketplace plugin manifest | ✅ ready, not published | At `plugin/`; needs publish to `anthropics/claude-plugins-community` |
-| `flow_check`, `flow_setup_oauth`, `flow_capture`, `flow_sync`, `flow_status` MCP tools | 🚧 **NOT live** | Promised in plugin SKILL.md but server returns only `flow_status_check` today. M2 v2 work. |
+| Hosted MCP server at `mcp.kindtree.us/api/mcp` | ✅ deployed | 5 tools live: `flow_status_check`, `flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` (alias) |
+| Vault endpoint at `mcp.kindtree.us/api/vault/credentials` | ✅ deployed | GET; scopes shared dev creds to providers the project has configured; rate-limited per-IP and per-install_id |
+| Upstash Redis (KV) | ✅ provisioned | State + vault entries persist across functions |
+| `flow-vault@0.1.0` on npm | ✅ published | Public; `npm install --save-dev flow-vault` works for anyone |
+| GitHub repo at `vivekschaudhary/flow-mcp` | ✅ public | Marketplace + runtime + server source |
+| Provider registry — `google-oauth-web` (Google sign-in) | ✅ live (dev only) | Library variants for nextauth/clerk/auth0/custom; multi-port + multi-callback whitelist |
+| Provider registry — `email_provider` (Resend under the hood) | ✅ live (dev only) | Sends from `onboarding@resend.dev`; shared key restricted (no verified domains on Flow's Resend account) |
+| Vault endpoint rate limits | ✅ live | Per-IP: 30/min, 200/hr. Per-install_id: 5/min, 50/hr. 429 + Retry-After on cap. |
+| Production credential intake (`flow_capture`, `flow_setup_provider(production)`) | 🚧 **NOT live** | M2.5 work — until then all integrations are dev-only |
+| `flow login` CLI for real auth | 🚧 **NOT live** | v0.2 work — replaces anonymous install_id model |
 
 The `flow-vault` runtime is proven; what remains is the MCP tool layer that lets Claude write to the vault on behalf of the user, plus distribution polish.
 
@@ -223,7 +228,9 @@ Every developer using AI to build software hits the same wall — the code write
 
 ## Notes for Claude when this file is loaded
 
-- The hosted MCP server presently exposes ONLY `flow_status_check` (a stub). The other `flow_*` tools listed in the plugin's SKILL.md are NOT live yet — that's the M2 v2 work item. If you call them, you'll get "method not found." Don't promise functionality that isn't shipped.
-- The `flow-vault` runtime IS proven working end-to-end. If you need to demonstrate Flow's value, point at that.
-- Never echo Google/Flow shared credential VALUES into chat; reference by variable name only.
-- Per-project credentials (production) belong to the user; Flow only orchestrates capture + vault storage.
+- The hosted MCP server now exposes 5 tools (see Live surface table above). Use `flow_setup_provider` for new provider setup; `flow_setup_oauth` is a backward-compat alias for the Google OAuth case.
+- `flow_capture`, `flow_sync`, `flow_setup`, and `flow_setup_provider(production)` are NOT live (M2.5 / deprecated). If you call them you'll get "method not found" or a "coming soon" reply.
+- The `flow-vault` runtime is on npm and proven working end-to-end on real apps.
+- Adding a new provider = one entry in `src/lib/providers.ts` + a `FLOW_<...>_*` env var on Vercel. No new MCP tool required.
+- Never echo any credential VALUE into chat (Google client_secret, Resend API key, anything captured from a user's downloaded JSON). Reference by variable name only. The vault endpoint returns values in plaintext by design — be careful when curl-testing it; pipe through a presence-check, not a pretty-printer.
+- Per-project credentials (production) belong to the user; Flow only orchestrates capture + vault storage. Production intake is M2.5.
