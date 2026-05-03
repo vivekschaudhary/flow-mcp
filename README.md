@@ -16,7 +16,7 @@ Pre-release. Hosted vault is live. Runtime package is built and proven end-to-en
 
 ```bash
 # In Claude Code:
-/plugin marketplace add vivek-chaudhary/flow-mcp
+/plugin marketplace add vivekschaudhary/flow-mcp
 /plugin install flow@flow-marketplace
 ```
 
