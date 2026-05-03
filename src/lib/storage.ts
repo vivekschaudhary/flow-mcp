@@ -39,6 +39,7 @@ export interface ProjectState {
 // ─── Client ──────────────────────────────────────────────────────────────────
 
 let _redis: Redis | null | undefined; // undefined = unchecked, null = no KV configured
+let _fallbackWarned = false;
 
 function getRedis(): Redis | null {
   if (_redis !== undefined) return _redis;
@@ -54,6 +55,21 @@ function getRedis(): Redis | null {
 
   if (!url || !token) {
     _redis = null;
+    if (!_fallbackWarned) {
+      _fallbackWarned = true;
+      // Loud warning — this hid a real bug for hours during development.
+      // In-memory fallback is per-instance, so writes from one Vercel function
+      // are invisible to others. Means tools that look like they "succeed"
+      // store data nowhere durable, and any cross-function reads return empty.
+      // If you see this in production logs, KV needs provisioning.
+      process.stderr.write(
+        "[flow-mcp storage] WARNING: No KV env vars detected " +
+          "(UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN). " +
+          "Falling back to in-memory state — writes will NOT persist " +
+          "across function instances. Provision Upstash Redis on the " +
+          "Vercel project to fix.\n"
+      );
+    }
     return null;
   }
   _redis = new Redis({ url, token });

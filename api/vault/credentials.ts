@@ -9,20 +9,25 @@
  *   v2 (later):     real session validation against KV-stored sessions.
  *
  * Resolution order for the response:
- *   1. Stored vault entries from Flow MCP tool runs (flow_setup_oauth, etc.)
- *   2. For environment="development" only: shared dev credentials from
- *      Flow's own GCP project, mapped from FLOW_GOOGLE_CLIENT_ID/SECRET
- *      (Vercel project env) into GOOGLE_CLIENT_ID/SECRET in the response.
- *      Stored entries take priority on key overlap.
- *   3. For environment="preview"/"production": stored only — never expose
- *      shared dev creds outside dev.
+ *   1. For each integration the project has configured (per state.integrations),
+ *      look up the provider in the registry and gather its runtime env vars.
+ *   2. For env="development" only: merge in shared dev values from Flow's
+ *      server env (e.g. FLOW_GOOGLE_CLIENT_ID → GOOGLE_CLIENT_ID).
+ *   3. For env="preview"/"production": shared dev values are NOT included.
+ *      Only what's been explicitly stored in the vault (post-M2.5 user-owned).
+ *   4. Stored vault entries always take priority on overlap.
+ *
+ * Scoping: only providers the project has configured contribute env vars.
+ * If a project sets up Google OAuth but not Resend, the response contains
+ * GOOGLE_CLIENT_ID/SECRET but not RESEND_API_KEY.
  *
  * Failure modes return JSON with non-200 status:
  *   401 missing/empty bearer
  *   400 missing project param
  */
 
-import { getVault } from "../../src/lib/storage.js";
+import { getState, getVault } from "../../src/lib/storage.js";
+import { sharedDevValuesForIntegrations } from "../../src/lib/providers.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -32,17 +37,6 @@ function jsonResponse(status: number, body: unknown): Response {
     status,
     headers: { "content-type": "application/json" },
   });
-}
-
-function sharedDevCreds(): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (process.env.FLOW_GOOGLE_CLIENT_ID) {
-    out.GOOGLE_CLIENT_ID = process.env.FLOW_GOOGLE_CLIENT_ID;
-  }
-  if (process.env.FLOW_GOOGLE_CLIENT_SECRET) {
-    out.GOOGLE_CLIENT_SECRET = process.env.FLOW_GOOGLE_CLIENT_SECRET;
-  }
-  return out;
 }
 
 async function handle(request: Request): Promise<Response> {
@@ -56,14 +50,28 @@ async function handle(request: Request): Promise<Response> {
   if (!session) return jsonResponse(401, { error: "missing bearer token" });
   if (!project) return jsonResponse(400, { error: "missing project query param" });
 
+  // Project state determines which providers' env vars to surface.
+  // No state → no configured integrations → empty response. The runtime
+  // degrades gracefully (developer's existing env still works).
+  const state = await getState(session, project);
+  const configuredIntegrationIds = state
+    ? Object.keys(state.integrations).filter(
+        (id) => state.integrations[id].status === "configured"
+      )
+    : [];
+
+  // Stored vault entries (per env). Captured creds, manual overrides, etc.
   const stored = await getVault(session, project, envParam);
 
-  // Dev: stored merged on top of shared dev creds.
-  // Preview/prod: stored only.
-  const merged =
+  // Shared dev creds — only for env=development. For preview/prod we want
+  // explicit user-owned creds (or nothing). This is the trust boundary.
+  const sharedDev =
     envParam === "development"
-      ? { ...sharedDevCreds(), ...stored }
-      : stored;
+      ? sharedDevValuesForIntegrations(configuredIntegrationIds)
+      : {};
+
+  // Stored takes priority over shared.
+  const merged = { ...sharedDev, ...stored };
 
   return jsonResponse(200, merged);
 }

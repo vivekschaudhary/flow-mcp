@@ -13,19 +13,21 @@ Flow is a hosted credential vault and Claude Code plugin. Today it handles Googl
 | `flow_status_check` | Connectivity probe. Returns server build state. |
 | `flow_check` | Read project + integration status from Flow's hosted vault. |
 | `flow_status` | Verbose project health. |
-| `flow_setup_oauth` | **Development only.** Stores Google OAuth dev creds in vault and tells you how to install flow-vault. Production setup returns "coming soon." |
+| `flow_setup_provider` | **Generic, dev only.** Set up any registered provider (`google-oauth-web`, `resend`, more coming) by storing dev creds in vault and returning runtime install instructions. Production environment returns "coming soon." |
+| `flow_setup_oauth` | Backward-compat alias. Equivalent to `flow_setup_provider(provider="google-oauth-web")`. New code should call `flow_setup_provider` directly. |
 
 ## When to invoke proactively
 
-- Developer says **"set up Google OAuth"** / "add Google sign-in" / "wire up Google login" → call `flow_setup_oauth` after first calling `flow_check` to verify it's not already configured.
+- Developer says **"set up Google OAuth"** / "add Google sign-in" / "wire up Google login" → call `flow_setup_provider(provider="google-oauth-web")` after first calling `flow_check` to verify it's not already configured.
+- Developer says **"send email"** / "wire up transactional email" / "send a confirmation email" / "add an email provider" → call `flow_setup_provider(provider="email_provider")` after `flow_check`. (The vendor under the hood is currently Resend; the user's tool call doesn't need to know that.)
 - Developer asks **"what integrations does this project have?"** → call `flow_check` (or `flow_status` for verbose).
 - Developer asks **"is Flow up?"** → call `flow_status_check`.
 
 ## When NOT to invoke
 
-- Developer asks for **Stripe / Twilio / Resend / Auth0 / Pusher** integration — there's no playbook tool yet. Tell them: "Flow plans to handle this in v0.2 / v0.3, but the tool isn't live. For now, set it up the normal way." Do not call `flow_setup` (doesn't exist) or `flow_capture` (doesn't exist) — they will return "method not found."
-- Developer asks for **production Google OAuth** — `flow_setup_oauth(production)` returns "coming soon" today. Tell them: "Production OAuth setup is the next milestone. For now, use Flow for dev; for production, you'd set it up the normal way and we'll migrate later."
-- Developer asks for **credential rotation, revocation, or audit** — also planned but not live. Tell them honestly.
+- Developer asks for **payments / Stripe / SMS / Twilio / push / Pusher / Auth0** integration — no provider slot registered yet. Tell them: "Flow plans to add a `payments_provider` / `sms_provider` slot in v0.2 / v0.3, but it isn't live yet. For now, set it up the normal way." Do not call `flow_setup_provider` with a provider id not in the live list (`google-oauth-web`, `email_provider`).
+- Developer asks for **production setup** of any provider — `flow_setup_provider(environment="production")` returns "coming soon" today. Tell them: "Production setup is the next milestone. Use Flow for dev; configure prod normally for now and migrate later."
+- Developer asks for **credential rotation, revocation, or audit** — also planned but not live.
 
 ## How to call (the canonical flow for Google OAuth dev setup)
 
@@ -42,7 +44,7 @@ flow_check()
 The server generates a UUID and returns instructions. Apply them:
 
 1. Use your **Write** tool to create `.flow/install.json` in the project root containing `{"install_id":"<uuid>"}`.
-2. Use your **Bash** tool to run `node -e "require('flow-vault/keychain').storeSession('<uuid>')"` — but only if flow-vault is already installed in the project. If it isn't, defer this until step 3 of `flow_setup_oauth`.
+2. Use your **Bash** tool to run `node -e "require('flow-vault/keychain').storeSession('<uuid>')"` — but only if flow-vault is already installed in the project. If it isn't, defer this until step 3 of `flow_setup_provider`.
 3. Confirm to the developer that the install_id is written.
 
 ### Step 2 — Read project_name from package.json
@@ -55,21 +57,28 @@ Use your **Read** tool on `<project-root>/package.json` and extract the `name` f
 flow_check(install_id="<uuid>", project_name="<name>")
 ```
 
-If `google-oauth-web` already shows configured, you're done — tell the developer it's already set up and they can use it.
+If the integration the developer asked about (e.g. `google-oauth-web`, `resend`) already shows configured, you're done — tell them it's already set up.
 
 ### Step 4 — Set up the integration
 
 ```
-flow_setup_oauth(install_id="<uuid>", environment="development", project_name="<name>")
+flow_setup_provider(
+  install_id="<uuid>",
+  project_name="<name>",
+  provider="google-oauth-web",   // or "resend", or another registered id
+  environment="development"
+)
 ```
 
 The server returns text with three numbered actions. Apply them:
 
-1. Run `npm install --save-dev flow-vault` (or the local-path form the server suggests).
+1. Run `npm install --save-dev flow-vault` (skip if already installed for this project).
 2. Edit `package.json` to add a script like `"dev:flow": "NODE_OPTIONS='--require=flow-vault' vercel dev"` (or framework-specific equivalent — see the server's reply for examples).
 3. If you didn't yet store the keychain session in step 1, do it now with the snippet the server gave you.
 
-Then tell the developer: "Restart your dev server. `process.env.GOOGLE_CLIENT_ID` will now resolve from Flow's vault."
+The server's reply also includes "Provider-specific notes" — read them and surface anything the developer needs to know (e.g. for Resend: "use `from: 'onboarding@resend.dev'` while in dev"; for Google OAuth: "supported callback paths and ports").
+
+Then tell the developer: "Restart your dev server. The relevant `process.env` variables will now resolve from Flow's vault."
 
 ### Step 5 — Confirm
 

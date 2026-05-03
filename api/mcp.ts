@@ -30,6 +30,9 @@ import {
   mergeVault,
   updateIntegration,
 } from "../src/lib/storage.js";
+import { PROVIDERS, sharedDevValuesFor } from "../src/lib/providers.js";
+
+const PROVIDER_IDS = Object.keys(PROVIDERS) as [string, ...string[]];
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -275,14 +278,29 @@ const handler = createMcpHandler(
       }
     );
 
-    // ─── flow_setup_oauth ──────────────────────────────────────────────
+    // ─── flow_setup_provider (generic — handles any registered provider) ────
+    //
+    // Replaces the old per-provider tools. To add a new integration: add an
+    // entry to src/lib/providers.ts and (for dev fallback) set the matching
+    // FLOW_<PROVIDER>_<KEY> env var on the Vercel project. No new tool needed.
     server.tool(
-      "flow_setup_oauth",
-      "Set up Google OAuth for a project. In development (the only live mode), stores Flow's shared dev credentials in the project's vault and returns instructions for installing flow-vault. Production setup is planned for M2.5 — returns 'coming soon' for now. ALWAYS pass install_id and project_name.",
+      "flow_setup_provider",
+      [
+        "Set up an integration for a project by storing its credentials in the Flow vault.",
+        `Supported providers: ${PROVIDER_IDS.join(", ")}.`,
+        "In environment='development' (the only live mode), Flow's shared dev credentials are stored in the project's vault and made available at runtime via flow-vault.",
+        "Production setup (environment='production') is planned for M2.5 and currently returns 'coming soon'.",
+        "ALWAYS pass install_id, project_name, and provider.",
+      ].join(" "),
       {
         install_id: z
           .string()
           .describe("Install ID from .flow/install.json"),
+        provider: z
+          .enum(PROVIDER_IDS)
+          .describe(
+            `Which integration to configure. One of: ${PROVIDER_IDS.join(", ")}.`
+          ),
         environment: z
           .enum(["development", "production"])
           .default("development")
@@ -293,39 +311,60 @@ const handler = createMcpHandler(
           .string()
           .describe('Value of the "name" field in package.json'),
       },
-      async ({ install_id, environment, project_name }) => {
+      async ({ install_id, provider, environment, project_name }) => {
+        const config = PROVIDERS[provider];
+        if (!config) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Unknown provider "${provider}". Supported: ${PROVIDER_IDS.join(
+                  ", "
+                )}.`,
+              },
+            ],
+          };
+        }
+
         if (environment === "production") {
           return {
             content: [
               {
                 type: "text",
                 text: [
-                  "Production OAuth setup is planned for the next milestone (M2.5).",
+                  `Production setup for ${config.name} is planned for the next milestone (M2.5).`,
                   "",
-                  "For now, use flow_setup_oauth with environment='development' to get",
-                  "Flow's shared dev credentials into the vault. When production setup",
-                  "ships, it will guide you through one Google Cloud Console visit and",
-                  "capture the resulting JSON automatically.",
+                  "For now, use environment='development' to get Flow's shared dev credentials",
+                  "into the vault. Production setup will guide you through the provider's",
+                  "console once and capture the resulting credentials automatically.",
                 ].join("\n"),
               },
             ],
           };
         }
 
-        const clientId = process.env.FLOW_GOOGLE_CLIENT_ID;
-        const clientSecret = process.env.FLOW_GOOGLE_CLIENT_SECRET;
+        // Pull shared dev values from Flow's server env for this provider.
+        const sharedValues = sharedDevValuesFor(provider);
 
-        if (!clientId || !clientSecret) {
+        // Confirm every required env var is available.
+        const missingRequired = config.env_vars.filter(
+          (v) => v.required && !sharedValues[v.runtime_name]
+        );
+        if (missingRequired.length > 0) {
+          const names = missingRequired
+            .map((v) => v.source_env || `(no source for ${v.runtime_name})`)
+            .join(", ");
           return {
             content: [
               {
                 type: "text",
                 text: [
-                  "✗ Flow's shared development credentials are not configured on the hosted server.",
+                  `✗ ${config.name} shared development credentials are not fully configured on the hosted server.`,
                   "",
-                  "This is a server-side issue (env vars FLOW_GOOGLE_CLIENT_ID and",
-                  "FLOW_GOOGLE_CLIENT_SECRET need to be set on the Vercel project).",
-                  "Ask Vivek to verify with `vercel env ls` against the flow-mcp project.",
+                  `Missing env var(s): ${names}`,
+                  "",
+                  "This is a server-side issue. Ask Vivek to set the missing env vars on",
+                  "the flow-mcp Vercel project, then redeploy.",
                 ].join("\n"),
               },
             ],
@@ -334,16 +373,13 @@ const handler = createMcpHandler(
 
         // Store the creds in the project's vault under the development env.
         // flow-vault will fetch this map at app boot and inject into process.env.
-        await mergeVault(install_id, project_name, "development", {
-          GOOGLE_CLIENT_ID: clientId,
-          GOOGLE_CLIENT_SECRET: clientSecret,
-        });
+        await mergeVault(install_id, project_name, "development", sharedValues);
 
         // Mark the integration as configured in project state.
         await updateIntegration(
           install_id,
           project_name,
-          "google-oauth-web",
+          config.id,
           "configured",
           {
             configured_at: new Date().toISOString(),
@@ -352,31 +388,127 @@ const handler = createMcpHandler(
           }
         );
 
+        const runtimeKeys = config.env_vars
+          .map((v) => `process.env.${v.runtime_name}`)
+          .join(", ");
+
         return {
           content: [
             {
               type: "text",
               text: [
-                "✓ Google OAuth dev credentials stored in your project's Flow vault.",
+                `✓ ${config.name} dev credentials stored in your project's Flow vault.`,
                 "",
-                "To make them available to your app at runtime, two changes:",
+                "To make them available to your app at runtime, three steps:",
                 "",
-                "1. Install flow-vault as a dev dependency:",
+                "1. Install flow-vault as a dev dependency (skip if already installed):",
                 "   npm install --save-dev flow-vault",
                 "",
                 "2. Wrap your dev script with the --require flag in package.json scripts:",
                 `   "dev:flow": "NODE_OPTIONS='--require=flow-vault' vercel dev"`,
-                "",
                 "   (Don't name the script 'dev' if you use vercel dev — Vercel detects recursion.",
-                "   For other frameworks: `nodemon --require flow-vault server.js`,",
-                "   `ts-node --require flow-vault/register server.ts`, etc.)",
+                "    For other frameworks: nodemon --require flow-vault, ts-node --require",
+                "    flow-vault/register, etc.)",
                 "",
-                `3. Verify the keychain session matches the install_id "${install_id}":`,
+                `3. Verify the keychain session matches the install_id "${install_id}" (skip if already done):`,
                 `   node -e "require('flow-vault/keychain').storeSession('${install_id}')"`,
                 "",
-                "Then restart your dev server. process.env.GOOGLE_CLIENT_ID and",
-                "process.env.GOOGLE_CLIENT_SECRET will resolve transparently from the vault.",
-                "No .env line needed.",
+                `Then restart your dev server. ${runtimeKeys} will resolve transparently from the vault. No .env line needed.`,
+                "",
+                "─── Provider-specific notes ───",
+                config.setup_notes,
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+    );
+
+    // ─── flow_setup_oauth (backward-compat alias) ──────────────────────
+    //
+    // Existing SKILL.md, agents, and prior conversations know about this name.
+    // Internally just calls flow_setup_provider with provider="google-oauth-web".
+    server.tool(
+      "flow_setup_oauth",
+      "Backward-compat alias. Sets up Google OAuth (provider='google-oauth-web'). New integrations should use flow_setup_provider with the appropriate provider id.",
+      {
+        install_id: z.string().describe("Install ID from .flow/install.json"),
+        environment: z
+          .enum(["development", "production"])
+          .default("development"),
+        project_name: z
+          .string()
+          .describe('Value of the "name" field in package.json'),
+      },
+      async ({ install_id, environment, project_name }) => {
+        // Mirror the flow_setup_provider logic for the Google OAuth case.
+        // We don't call the other handler directly because mcp-handler doesn't
+        // expose handler chaining; the duplication is the alias's whole job.
+        const provider = "google-oauth-web";
+        const config = PROVIDERS[provider];
+
+        if (environment === "production") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Production setup for ${config.name} is planned for M2.5. Use environment='development' for now.`,
+              },
+            ],
+          };
+        }
+
+        const sharedValues = sharedDevValuesFor(provider);
+        const missingRequired = config.env_vars.filter(
+          (v) => v.required && !sharedValues[v.runtime_name]
+        );
+        if (missingRequired.length > 0) {
+          const names = missingRequired
+            .map((v) => v.source_env || `(no source for ${v.runtime_name})`)
+            .join(", ");
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✗ ${config.name} shared dev credentials missing on server. Missing: ${names}`,
+              },
+            ],
+          };
+        }
+
+        await mergeVault(install_id, project_name, "development", sharedValues);
+        await updateIntegration(
+          install_id,
+          project_name,
+          config.id,
+          "configured",
+          {
+            configured_at: new Date().toISOString(),
+            environments_synced: ["development"],
+            playbook_version: "dev-shared-runtime-v1",
+          }
+        );
+
+        const runtimeKeys = config.env_vars
+          .map((v) => `process.env.${v.runtime_name}`)
+          .join(", ");
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `✓ ${config.name} dev credentials stored in your project's Flow vault.`,
+                "",
+                "Three steps to make them available at runtime:",
+                "1. npm install --save-dev flow-vault (if not already installed)",
+                `2. Add to package.json scripts: "dev:flow": "NODE_OPTIONS='--require=flow-vault' vercel dev"`,
+                `3. node -e "require('flow-vault/keychain').storeSession('${install_id}')" (if not already done)`,
+                "",
+                `Restart your dev server. ${runtimeKeys} will resolve from the vault.`,
+                "",
+                "─── Provider-specific notes ───",
+                config.setup_notes,
               ].join("\n"),
             },
           ],
