@@ -2,7 +2,7 @@
 
 **Stay in it.**
 
-Flow is a hosted credential vault and Claude Code plugin. You ask Claude to set up Google OAuth (or Stripe, or any integration). Claude calls Flow. Credentials appear in your app at runtime, in memory only — never written to a `.env` file, never pasted into chat. You stay in conversation.
+Flow is a hosted credential vault that plugs into any AI coding tool with MCP support — Claude Code, Cursor, Windsurf. You ask the AI to set up Google OAuth (or Stripe, or any integration). The AI calls Flow. Credentials appear in your app at runtime, in memory only — never written to a `.env` file, never pasted into chat. You stay in conversation.
 
 The problem Flow solves: integration setup is the wall every AI-built project hits. Reading provider docs, juggling consoles, copy-pasting secrets, fixing leaked-key incidents — it interrupts your conversation with Claude and costs 20–30 minutes of context to recover. Flow absorbs that interruption.
 
@@ -10,27 +10,59 @@ How it works: a hosted MCP server holds Flow's shared development credentials an
 
 ## Status
 
-Pre-release. Hosted vault is live. Runtime package is built and proven end-to-end. The MCP tool layer that lets Claude write to the vault (`flow_setup_oauth`, `flow_capture`, etc.) is the next milestone — currently the server exposes only a `flow_status_check` stub. See `CLAUDE.md` for full state.
+Pre-release. Live: hosted vault + runtime package on npm + MCP tools for Google OAuth dev (`flow_check`, `flow_status`, `flow_setup_oauth(development)`, `flow_status_check`). Coming: production OAuth (`flow_capture`, `flow_setup_oauth(production)`), Stripe + Twilio + Resend playbooks, `flow login` CLI for keychain session. See `CLAUDE.md` for the full roadmap.
 
-## Quick start
+## Quick start (works in any MCP-capable AI tool)
 
-```bash
-# In Claude Code:
+Add this JSON snippet to your AI tool's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "flow": {
+      "type": "http",
+      "url": "https://mcp.kindtree.us/api/mcp"
+    }
+  }
+}
+```
+
+Where to paste it depends on your tool:
+
+| Tool | File path |
+|---|---|
+| **Cursor** (project) | `<your-project>/.cursor/mcp.json` |
+| **Cursor** (all projects) | `~/.cursor/mcp.json` |
+| **Claude Code** (any) | `<your-project>/.mcp.json` |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` |
+| **VS Code** with MCP-enabled Copilot | `<your-project>/.vscode/mcp.json` |
+
+Create the file if it doesn't exist. Restart your AI tool. Approve the trust prompt. Then in any Node project ask:
+
+```
+Use Flow to set up Google OAuth for development.
+```
+
+The AI calls Flow's MCP tools (`flow_check` → `flow_setup_oauth`), installs `flow-vault` into your project, wraps your dev script with `--require=flow-vault`, and tells you to restart your dev server. Your app reads `process.env.GOOGLE_CLIENT_ID` as normal — the value comes from Flow's vault, not from any `.env` file.
+
+### Quick start — Claude Code CLI users (alternative)
+
+If you're on the standalone Claude Code CLI (not the VSCode extension), `/plugin install` is available and gets you the SKILL.md auto-trigger as a bonus:
+
+```
 /plugin marketplace add vivekschaudhary/flow-mcp
 /plugin install flow@flow-marketplace
 ```
 
-Then in any Node project:
+After this, the AI proactively reaches for Flow on integration requests without needing the explicit "use Flow to..." phrasing.
 
-```
-You: Set up Google OAuth for development.
-```
+### Cursor / Windsurf caveat
 
-Claude calls Flow's MCP tools, installs `flow-vault` into your project, wraps your dev script with `--require=flow-vault`, and tells you to restart your dev server. Your app reads `process.env.GOOGLE_CLIENT_ID` as normal — the value comes from Flow's vault, not from any `.env` file.
+Those tools' agents don't read Claude Code's SKILL.md. The MCP server is the same and the tools work identically, but the AI won't auto-trigger Flow on bare "set up Google OAuth" — it needs the explicit hint **"use Flow to..."**. After that, tool descriptions on the server itself drive correct usage.
 
 ## What you do manually (until v0.2)
 
-The bootstrap step requires you to store a session token in the OS keychain so flow-vault can authenticate when your app boots. Claude tells you the exact command at the right moment; it looks like:
+The bootstrap step requires you to store a session token in the OS keychain so flow-vault can authenticate when your app boots. The AI tells you the exact command at the right moment; it looks like:
 
 ```bash
 node -e "require('flow-vault/keychain').storeSession('<install-id>')"
