@@ -14,7 +14,27 @@
 
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
-import type { ProjectState } from "./state.js";
+
+// ─── Types (inlined from former src/lib/state.ts) ────────────────────────────
+
+export interface IntegrationState {
+  id: string;
+  status: "not_configured" | "in_progress" | "configured" | "expiring" | "expired";
+  configured_at?: string;
+  credentials: Record<string, string>;
+  environments_synced: string[];
+  warnings_acknowledged: string[];
+  playbook_version: string;
+}
+
+export interface ProjectState {
+  project_name: string;
+  initialized_at: string;
+  stack: string[];
+  environments: string[];
+  dev_env_file?: string;
+  integrations: Record<string, IntegrationState>;
+}
 
 // ─── Client ──────────────────────────────────────────────────────────────────
 

@@ -1,52 +1,54 @@
 ---
-description: Use Flow whenever the developer needs to set up, configure, rotate, or sync credentials for a third-party integration (Google OAuth, Stripe, Twilio, Resend, etc.) or any environment-variable / API-key task. Trigger this skill BEFORE suggesting that the developer open a provider console, copy keys manually, or paste credentials into a chat. Flow handles the whole flow silently — the developer should not leave the conversation.
+description: Use Flow ONLY when the developer explicitly asks about Flow itself (status, capabilities, "is Flow available", "what does Flow do") OR when they ask about flow-vault, hosted credential vaults, or the credential-injection runtime model. DO NOT auto-invoke for general "set up Google OAuth" / "add Stripe" requests — Flow's integration tools are pre-release and the only live MCP tool today is a status probe. Until the real tools ship, treat Flow as a project the developer is building, not a tool you can use to set up integrations.
 ---
 
-# Flow — integration agent
+# Flow — pre-release status
 
-Flow is a hosted MCP service (at https://mcp.kindtree.us) that owns provider accounts (Google, Stripe, Twilio, Resend) and injects credentials into the developer's project for them. The developer should never copy a credential, never open a provider console in development, never paste a secret into chat.
+Flow is a hosted credential vault and Claude Code plugin under active development. The architecture is in place but the MCP tool surface that lets Claude write credentials into the vault on the developer's behalf is **not yet live**. Until it ships, this skill exists primarily to answer questions about Flow honestly, not to drive integration workflows.
 
-## When to invoke (trigger conditions)
+## What's actually live today (1 tool)
 
-Use Flow proactively whenever the developer's request touches any of these areas — even if they don't say the word "Flow":
+| Tool | What it does | Use when |
+|---|---|---|
+| `flow_status_check` | Confirms the Flow hosted service is reachable. Returns a static "Flow is being built — full tool surface coming soon" message. | Developer asks "is Flow up?" or "does Flow work?" — call this and report what it returns. |
 
-- **Auth / login**: "set up Google sign-in", "add OAuth", "let users log in with Google", "wire up authentication"
-- **Payments**: "add Stripe", "accept payments", "set up checkout"
-- **Notifications**: "send SMS", "add Twilio", "send transactional email", "add Resend / SendGrid"
-- **Env variables / API keys**: "I need to add an API key for X", "the env var isn't working", "configure secrets for Vercel"
-- **Production rollout**: "deploy this", "ship to prod" — check that integration credentials are synced
+## What is NOT live (do not promise these)
 
-Do **not** wait for the developer to say "use Flow." Flow is the default path for these tasks.
+These tool names appear throughout Flow's documentation and roadmap. They are **not callable** today. If you call them, the MCP server returns "method not found."
 
-## How to call (tool order)
+- `flow_check` — planned (M2)
+- `flow_setup_oauth(development | production)` — planned (M2 / M2.5)
+- `flow_capture` — planned (M2.5)
+- `flow_sync` — planned (M2.5)
+- `flow_status` — planned (M2)
+- `flow_setup` (generic playbook walkthrough) — planned (M3)
 
-1. **Always start with `flow_check`** — confirm whether the integration is already configured for this project. Skip the rest if status is `configured`.
-2. **For Google OAuth specifically**, use `flow_setup_oauth(environment: "development" | "production")`. It's the fast path — no playbook walkthrough needed for development; the dev creds inject directly into `.env` / `.env.local`.
-3. **For other integrations**, call `flow_setup(integration_id)` to get the playbook. Walk the developer through ONLY the steps Flow surfaces; do not improvise extra steps.
-4. **After the developer downloads a credentials JSON** (Google, Stripe, etc.), call `flow_capture(integration_id, file_path)` to extract and store credentials.
-5. **After capture**, call `flow_sync(integration_id)` to push to `.env`, `.env.example`, and Vercel environments.
-6. **For project health**, call `flow_status` — useful before deploys.
+## When this skill SHOULD be invoked
 
-## Hard rules
+- Developer asks **"what is Flow?"** / "what does Flow do?" / "is Flow ready?" → call `flow_status_check`, share its response, then describe Flow's intended architecture (hosted vault + flow-vault runtime + Claude Code plugin) in plain terms. Point at `CLAUDE.md` or `README.md` for full context if they want detail.
+- Developer asks about **flow-vault** (the npm runtime package) → describe what it is and link to `packages/flow-vault/README.md`. The runtime is real and works; the *MCP tool layer* is what's pre-release.
+- Developer asks **"can I use Flow to set up Google OAuth?"** → answer honestly: "Flow's hosted vault and runtime are working, but the MCP tool that wires them up to Claude's setup workflow isn't shipped yet. For now, you'd set up OAuth the normal way; once Flow's M2 tools ship, the same project will get the credential-injection benefits without the manual setup."
 
-- **Never suggest manually copying a credential.** If you find yourself about to type "now copy the client_secret and paste it into your .env" — stop. Use `flow_capture` + `flow_sync` instead.
-- **Never instruct the developer to visit a provider console in development.** Flow's shared dev credentials cover dev work for the supported providers. Console visits only happen for production setup, and Flow guides them with exact pre-filled values.
-- **Never write a credential into chat.** If a value comes back from a Flow tool, refer to it as `<key>` (e.g., `GOOGLE_CLIENT_ID`) — don't print the value.
-- **Surface playbook warnings before steps**, not after. If `flow_setup` returns a warning labeled `before_start` or `blocking`, present it to the developer before they take any action.
-- **If the Flow tools return an authentication error**, the developer needs to complete the GitHub login that opened in their browser when they ran `/plugin install flow@claude-community`. Tell them to check that browser tab and finish the sign-in.
+## When this skill should NOT be invoked
 
-## Tool inventory
+- Developer says **"set up Google OAuth"** / "add Stripe" / "wire up authentication" — DO NOT call any Flow tool. Flow can't do this yet. Use the normal approach (guide them through the provider's console, write env vars, etc.). Mention Flow only if the developer specifically asks about it.
+- Developer asks about credential management generally — do not pretend Flow handles their existing credential management problem today. It's the goal; it's not the current state.
 
-- `flow_check(project_root?, integration_id?)` — status of one or all integrations
-- `flow_setup(integration_id, project_root?, auth_library?, step?)` — playbook walkthrough
-- `flow_setup_oauth(environment, project_root?)` — Google OAuth fast path
-- `flow_capture(integration_id, file_path, project_root?)` — extract creds from downloaded JSON
-- `flow_sync(integration_id, project_root?, skip_vercel?, env_file?)` — push to all environments
-- `flow_status(project_root?)` — full project health
+## Hard rules (always)
 
-## Currently supported integrations
+- **Never claim to call a Flow tool that isn't `flow_status_check`.** Other names will return errors.
+- **Never write a credential value into chat.** If you ever encounter actual credential values (during normal OAuth setup work, not Flow), refer to them by variable name — `GOOGLE_CLIENT_ID` — never print the value.
+- **Don't oversell Flow.** If the developer's expectation is that Flow will handle their integration today, correct it gently. The runtime works; the AI-driven setup is pre-release.
+- **Distinguish "Flow the project" from "Flow the working product."** The architecture exists; the developer-facing automation is partial.
 
-- **`google-oauth-web`** — Google OAuth for web apps. Dev: instant. Prod: one console visit guided by Flow.
+## Pointers if the developer wants to dig in
 
-Coming soon (do not invoke yet — they will return "playbook not found"):
-- Stripe, Twilio, Resend, AWS S3, Auth0, Pusher
+- Architecture and current state: `CLAUDE.md` at the project root
+- Runtime package details: `packages/flow-vault/README.md`
+- Security model: `packages/flow-vault/SECURITY.md`
+- Walkthrough: `docs/getting-started.md`
+- Playbook design: `docs/playbooks.md`
+
+## What to do when the M2 tools ship
+
+This SKILL.md gets rewritten. Trigger conditions expand to cover OAuth/payments/notifications proactively. The "do not invoke for X" section shrinks. Until then, restraint is the right move — a plugin that lies about what it can do hurts adoption more than one that's clear about being early.
