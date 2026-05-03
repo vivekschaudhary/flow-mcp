@@ -28,14 +28,15 @@
 
 import { getState, getVault } from "../../src/lib/storage.js";
 import { sharedDevValuesForIntegrations } from "../../src/lib/providers.js";
+import { checkRateLimit, clientIp } from "../../src/lib/ratelimit.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
-function jsonResponse(status: number, body: unknown): Response {
+function jsonResponse(status: number, body: unknown, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }
 
@@ -49,6 +50,22 @@ async function handle(request: Request): Promise<Response> {
 
   if (!session) return jsonResponse(401, { error: "missing bearer token" });
   if (!project) return jsonResponse(400, { error: "missing project query param" });
+
+  // Rate limit: per-IP and per-install_id, minute + hour windows.
+  // Tight caps because legitimate flow-vault preload only hits this
+  // once per app boot (cached for the process lifetime).
+  const verdict = await checkRateLimit(clientIp(request), session);
+  if (!verdict.allowed) {
+    return jsonResponse(
+      429,
+      {
+        error: "rate limit exceeded",
+        reason: verdict.reason,
+        retry_after_seconds: verdict.retry_after,
+      },
+      { "retry-after": String(verdict.retry_after ?? 60) }
+    );
+  }
 
   // Project state determines which providers' env vars to surface.
   // No state → no configured integrations → empty response. The runtime
