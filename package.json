@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Flow — integration OS for AI-built software",
   "type": "module",
+  "private": true,
   "workspaces": [
     "packages/*"
   ],

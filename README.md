@@ -12,35 +12,31 @@ How it works: a hosted MCP server holds Flow's shared development credentials an
 
 Pre-release. Hosted vault is live. Runtime package is built and proven end-to-end. The MCP tool layer that lets Claude write to the vault (`flow_setup_oauth`, `flow_capture`, etc.) is the next milestone — currently the server exposes only a `flow_status_check` stub. See `CLAUDE.md` for full state.
 
-## Quick start (today, manual)
+## Quick start
 
 ```bash
-# In your project
-npm install --save-dev file:/path/to/flow-mcp/packages/flow-vault
-
-# Wrap your dev script
-# package.json:
-"scripts": { "dev:flow": "NODE_OPTIONS='--require=flow-vault' vercel dev" }
-
-# Store a session token (anonymous v1; flow login replaces this later)
-node -e "require('flow-vault/keychain').storeSession('any-string')"
-
-# Run
-npm run dev:flow
-```
-
-Your app reads `process.env.GOOGLE_CLIENT_ID` as normal. The value is delivered from Flow's vault.
-
-## Quick start (post-launch, planned)
-
-```bash
-flow login                               # opens browser, GitHub OAuth, stores session
 # In Claude Code:
-/plugin install flow@claude-community
-> Set up Google OAuth for development
-# Claude installs flow-vault, edits your start script, restarts your dev server.
-# Done.
+/plugin marketplace add vivek-chaudhary/flow-mcp
+/plugin install flow@flow-marketplace
 ```
+
+Then in any Node project:
+
+```
+You: Set up Google OAuth for development.
+```
+
+Claude calls Flow's MCP tools, installs `flow-vault` into your project, wraps your dev script with `--require=flow-vault`, and tells you to restart your dev server. Your app reads `process.env.GOOGLE_CLIENT_ID` as normal — the value comes from Flow's vault, not from any `.env` file.
+
+## What you do manually (until v0.2)
+
+The bootstrap step requires you to store a session token in the OS keychain so flow-vault can authenticate when your app boots. Claude tells you the exact command at the right moment; it looks like:
+
+```bash
+node -e "require('flow-vault/keychain').storeSession('<install-id>')"
+```
+
+The `flow login` CLI in v0.2 will replace this with a one-time GitHub login.
 
 ## How it works
 

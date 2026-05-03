@@ -45,11 +45,11 @@ In Claude Code:
 
 Plugin appears in `/mcp`. From now on Claude knows about Flow.
 
-## Manual setup (today, until M2 ships)
+## Manual setup (when you want to test flow-vault directly without Claude)
 
 ```bash
 # 1. Install flow-vault as a dev dependency
-npm install --save-dev file:/path/to/flow-mcp/packages/flow-vault
+npm install --save-dev flow-vault
 
 # 2. Wrap your dev script
 # package.json:
@@ -61,7 +61,7 @@ npm install --save-dev file:/path/to/flow-mcp/packages/flow-vault
 node -e "require('flow-vault/keychain').storeSession('your-machine-id')"
 ```
 
-That's the entire setup. No global tools, no `flow login` yet, no Claude plugin needed if you just want to test the runtime.
+That's the entire setup if you want to use the runtime without the Claude Code plugin. With the plugin installed, Claude does steps 1 and 2 for you when you ask for an integration.
 
 ## Your first integration
 

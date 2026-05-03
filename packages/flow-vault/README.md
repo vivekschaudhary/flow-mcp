@@ -18,20 +18,12 @@ Cached in process memory for the lifetime of the Node process. One fetch per col
 
 ## Status
 
-Pre-release. Not yet on npm. Currently consumed via local `file:` dependency. The `flow login` CLI for keychain session management is planned (today, store the session manually with a small Node snippet — see "Manual session" below).
+Pre-release. Published to npm as `flow-vault@0.1.0`. The `flow login` CLI for keychain session management is planned (today, store the session manually with a small Node snippet — see "Manual session" below).
 
 ## Installation
 
-When published:
-
 ```bash
 npm install --save-dev flow-vault
-```
-
-Today (local development):
-
-```bash
-npm install --save-dev file:/path/to/flow-mcp/packages/flow-vault
 ```
 
 Then add `--require=flow-vault` to whatever launches Node. Examples:

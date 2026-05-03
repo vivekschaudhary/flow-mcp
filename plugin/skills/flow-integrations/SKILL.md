@@ -1,54 +1,97 @@
 ---
-description: Use Flow ONLY when the developer explicitly asks about Flow itself (status, capabilities, "is Flow available", "what does Flow do") OR when they ask about flow-vault, hosted credential vaults, or the credential-injection runtime model. DO NOT auto-invoke for general "set up Google OAuth" / "add Stripe" requests — Flow's integration tools are pre-release and the only live MCP tool today is a status probe. Until the real tools ship, treat Flow as a project the developer is building, not a tool you can use to set up integrations.
+description: Use Flow when the developer asks for help setting up Google OAuth in development OR asks about Flow's status / what Flow can do. Currently Flow handles Google OAuth dev setup end-to-end (stores Flow's shared dev credentials in a hosted vault, instructs you to install the flow-vault Node preload, and after that the developer's app reads process.env.GOOGLE_CLIENT_ID transparently with no .env line). For other integrations (Stripe, Twilio, prod OAuth, credential capture from JSON), tell the developer the tool is planned but not yet live — do not invent behavior.
 ---
 
-# Flow — pre-release status
+# Flow — integration agent
 
-Flow is a hosted credential vault and Claude Code plugin under active development. The architecture is in place but the MCP tool surface that lets Claude write credentials into the vault on the developer's behalf is **not yet live**. Until it ships, this skill exists primarily to answer questions about Flow honestly, not to drive integration workflows.
+Flow is a hosted credential vault and Claude Code plugin. Today it handles Google OAuth for development end-to-end. Other integrations (production OAuth, Stripe, Twilio, etc.) are planned but not live yet — be honest about that.
 
-## What's actually live today (1 tool)
+## Live tools (only these — anything else returns "method not found")
 
-| Tool | What it does | Use when |
-|---|---|---|
-| `flow_status_check` | Confirms the Flow hosted service is reachable. Returns a static "Flow is being built — full tool surface coming soon" message. | Developer asks "is Flow up?" or "does Flow work?" — call this and report what it returns. |
+| Tool | What it does |
+|---|---|
+| `flow_status_check` | Connectivity probe. Returns server build state. |
+| `flow_check` | Read project + integration status from Flow's hosted vault. |
+| `flow_status` | Verbose project health. |
+| `flow_setup_oauth` | **Development only.** Stores Google OAuth dev creds in vault and tells you how to install flow-vault. Production setup returns "coming soon." |
 
-## What is NOT live (do not promise these)
+## When to invoke proactively
 
-These tool names appear throughout Flow's documentation and roadmap. They are **not callable** today. If you call them, the MCP server returns "method not found."
+- Developer says **"set up Google OAuth"** / "add Google sign-in" / "wire up Google login" → call `flow_setup_oauth` after first calling `flow_check` to verify it's not already configured.
+- Developer asks **"what integrations does this project have?"** → call `flow_check` (or `flow_status` for verbose).
+- Developer asks **"is Flow up?"** → call `flow_status_check`.
 
-- `flow_check` — planned (M2)
-- `flow_setup_oauth(development | production)` — planned (M2 / M2.5)
-- `flow_capture` — planned (M2.5)
-- `flow_sync` — planned (M2.5)
-- `flow_status` — planned (M2)
-- `flow_setup` (generic playbook walkthrough) — planned (M3)
+## When NOT to invoke
 
-## When this skill SHOULD be invoked
+- Developer asks for **Stripe / Twilio / Resend / Auth0 / Pusher** integration — there's no playbook tool yet. Tell them: "Flow plans to handle this in v0.2 / v0.3, but the tool isn't live. For now, set it up the normal way." Do not call `flow_setup` (doesn't exist) or `flow_capture` (doesn't exist) — they will return "method not found."
+- Developer asks for **production Google OAuth** — `flow_setup_oauth(production)` returns "coming soon" today. Tell them: "Production OAuth setup is the next milestone. For now, use Flow for dev; for production, you'd set it up the normal way and we'll migrate later."
+- Developer asks for **credential rotation, revocation, or audit** — also planned but not live. Tell them honestly.
 
-- Developer asks **"what is Flow?"** / "what does Flow do?" / "is Flow ready?" → call `flow_status_check`, share its response, then describe Flow's intended architecture (hosted vault + flow-vault runtime + Claude Code plugin) in plain terms. Point at `CLAUDE.md` or `README.md` for full context if they want detail.
-- Developer asks about **flow-vault** (the npm runtime package) → describe what it is and link to `packages/flow-vault/README.md`. The runtime is real and works; the *MCP tool layer* is what's pre-release.
-- Developer asks **"can I use Flow to set up Google OAuth?"** → answer honestly: "Flow's hosted vault and runtime are working, but the MCP tool that wires them up to Claude's setup workflow isn't shipped yet. For now, you'd set up OAuth the normal way; once Flow's M2 tools ship, the same project will get the credential-injection benefits without the manual setup."
+## How to call (the canonical flow for Google OAuth dev setup)
 
-## When this skill should NOT be invoked
+This is the pattern. Internalize it.
 
-- Developer says **"set up Google OAuth"** / "add Stripe" / "wire up authentication" — DO NOT call any Flow tool. Flow can't do this yet. Use the normal approach (guide them through the provider's console, write env vars, etc.). Mention Flow only if the developer specifically asks about it.
-- Developer asks about credential management generally — do not pretend Flow handles their existing credential management problem today. It's the goal; it's not the current state.
+### Step 1 — Bootstrap install_id (only on a fresh project)
 
-## Hard rules (always)
+If the project has no `.flow/install.json`, call `flow_check` with NO arguments:
 
-- **Never claim to call a Flow tool that isn't `flow_status_check`.** Other names will return errors.
-- **Never write a credential value into chat.** If you ever encounter actual credential values (during normal OAuth setup work, not Flow), refer to them by variable name — `GOOGLE_CLIENT_ID` — never print the value.
-- **Don't oversell Flow.** If the developer's expectation is that Flow will handle their integration today, correct it gently. The runtime works; the AI-driven setup is pre-release.
-- **Distinguish "Flow the project" from "Flow the working product."** The architecture exists; the developer-facing automation is partial.
+```
+flow_check()
+```
 
-## Pointers if the developer wants to dig in
+The server generates a UUID and returns instructions. Apply them:
 
-- Architecture and current state: `CLAUDE.md` at the project root
-- Runtime package details: `packages/flow-vault/README.md`
+1. Use your **Write** tool to create `.flow/install.json` in the project root containing `{"install_id":"<uuid>"}`.
+2. Use your **Bash** tool to run `node -e "require('flow-vault/keychain').storeSession('<uuid>')"` — but only if flow-vault is already installed in the project. If it isn't, defer this until step 3 of `flow_setup_oauth`.
+3. Confirm to the developer that the install_id is written.
+
+### Step 2 — Read project_name from package.json
+
+Use your **Read** tool on `<project-root>/package.json` and extract the `name` field. You'll pass this to every subsequent Flow tool call.
+
+### Step 3 — Check current state
+
+```
+flow_check(install_id="<uuid>", project_name="<name>")
+```
+
+If `google-oauth-web` already shows configured, you're done — tell the developer it's already set up and they can use it.
+
+### Step 4 — Set up the integration
+
+```
+flow_setup_oauth(install_id="<uuid>", environment="development", project_name="<name>")
+```
+
+The server returns text with three numbered actions. Apply them:
+
+1. Run `npm install --save-dev flow-vault` (or the local-path form the server suggests).
+2. Edit `package.json` to add a script like `"dev:flow": "NODE_OPTIONS='--require=flow-vault' vercel dev"` (or framework-specific equivalent — see the server's reply for examples).
+3. If you didn't yet store the keychain session in step 1, do it now with the snippet the server gave you.
+
+Then tell the developer: "Restart your dev server. `process.env.GOOGLE_CLIENT_ID` will now resolve from Flow's vault."
+
+### Step 5 — Confirm
+
+Optional: `flow_check(install_id, project_name, integration_id="google-oauth-web")` to confirm "configured" status.
+
+## Hard rules
+
+- **Never call a tool not on the live-tools table above.** `flow_setup`, `flow_capture`, `flow_sync` will all return "method not found." If you ever feel like calling one of these, stop and use the normal non-Flow path instead.
+- **Never write a credential value into chat.** If a credential value somehow appears in a tool response (it shouldn't — `flow_setup_oauth` deliberately doesn't echo values), reference it by variable name in your reply, never the literal value.
+- **Never claim Flow handles an integration it doesn't.** If Flow has no live tool for the developer's request, say so plainly and proceed with the normal setup path.
+- **Always pass install_id and project_name** to `flow_check`, `flow_status`, and `flow_setup_oauth` (except the one bootstrap call where install_id is omitted).
+- **Apply the server's instructions verbatim.** When `flow_setup_oauth` returns numbered steps, execute each via the right tool (Write for files, Bash for shell, Edit for package.json mutation). Don't paraphrase or skip.
+
+## What about the developer's `.env` file?
+
+Flow's runtime model never writes to `.env`. After `flow_setup_oauth(dev)` succeeds and the developer restarts their dev server with `--require=flow-vault`, their app reads `process.env.GOOGLE_CLIENT_ID` and gets the value from Flow's vault — no `.env` line, no commit risk.
+
+If the developer ALREADY has `GOOGLE_CLIENT_ID` set in their `.env`, that value wins (flow-vault's Proxy yields to non-empty values). To use Flow's vault, they need to remove the `.env` line first.
+
+## Pointers
+
+- Architecture: `CLAUDE.md` at the repo root
+- Runtime details: `packages/flow-vault/README.md`
 - Security model: `packages/flow-vault/SECURITY.md`
 - Walkthrough: `docs/getting-started.md`
-- Playbook design: `docs/playbooks.md`
-
-## What to do when the M2 tools ship
-
-This SKILL.md gets rewritten. Trigger conditions expand to cover OAuth/payments/notifications proactively. The "do not invoke for X" section shrinks. Until then, restraint is the right move — a plugin that lies about what it can do hurts adoption more than one that's clear about being early.
