@@ -31,8 +31,40 @@ import {
   updateIntegration,
 } from "../src/lib/storage.js";
 import { PROVIDERS, sharedDevValuesFor } from "../src/lib/providers.js";
+import { logEvent, hashId, type FlowEvent } from "../src/lib/telemetry.js";
 
 const PROVIDER_IDS = Object.keys(PROVIDERS) as [string, ...string[]];
+
+/**
+ * Wrap a tool handler with fire-and-forget telemetry. Captures latency and
+ * the tool/provider/install/project metadata; never throws or blocks the
+ * underlying handler if logEvent fails.
+ */
+async function withTelemetry<T>(
+  meta: Omit<FlowEvent, "ts" | "ok" | "latency_ms">,
+  fn: () => Promise<T>
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    await logEvent({
+      ...meta,
+      ts: new Date().toISOString(),
+      ok: true,
+      latency_ms: Date.now() - start,
+    });
+    return result;
+  } catch (err) {
+    await logEvent({
+      ...meta,
+      ts: new Date().toISOString(),
+      ok: false,
+      latency_ms: Date.now() - start,
+      error_code: "exception",
+    });
+    throw err;
+  }
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -44,24 +76,26 @@ const handler = createMcpHandler(
       "flow_status_check",
       "Confirm the Flow hosted service is reachable. Returns server build state. Use this for a quick connectivity probe; for project status use flow_check or flow_status.",
       {},
-      async () => ({
-        content: [
-          {
-            type: "text",
-            text: [
-              "✓ Flow is online.",
-              "",
-              "Live tools:",
-              "  flow_check        — project + integration status",
-              "  flow_status       — verbose project health",
-              "  flow_setup_oauth  — store Google OAuth creds in vault (dev only in this milestone)",
-              "",
-              "Production OAuth setup (flow_setup_oauth(production)), credential capture",
-              "from JSON, and generic playbook walkthrough are planned for M2.5/M3.",
-            ].join("\n"),
-          },
-        ],
-      })
+      async () =>
+        withTelemetry({ source: "mcp", tool: "flow_status_check" }, async () => ({
+          content: [
+            {
+              type: "text",
+              text: [
+                "✓ Flow is online.",
+                "",
+                "Live tools:",
+                "  flow_check          — project + integration status",
+                "  flow_status         — verbose project health",
+                "  flow_setup_provider — store dev creds in vault (google-oauth-web, email_provider)",
+                "  flow_setup_oauth    — backward-compat alias for Google OAuth",
+                "",
+                "Production setup (environment='production'), credential capture from JSON,",
+                "and additional providers (Stripe, Twilio, etc.) are planned for M2.5+.",
+              ].join("\n"),
+            },
+          ],
+        }))
     );
 
     // ─── flow_check ────────────────────────────────────────────────────
@@ -88,7 +122,15 @@ const handler = createMcpHandler(
             'If set, returns status of just this integration (e.g. "google-oauth-web").'
           ),
       },
-      async ({ install_id, project_name, integration_id }) => {
+      async ({ install_id, project_name, integration_id }) =>
+        withTelemetry(
+          {
+            source: "mcp",
+            tool: "flow_check",
+            install_id_hash: hashId(install_id),
+            project_id_hash: hashId(project_name),
+          },
+          async () => {
         // Bootstrap: no install_id yet
         if (!install_id) {
           const newId = generateInstallId();
@@ -196,7 +238,8 @@ const handler = createMcpHandler(
         return {
           content: [{ type: "text", text: lines.join("\n") }],
         };
-      }
+          }
+        )
     );
 
     // ─── flow_status ───────────────────────────────────────────────────
@@ -211,7 +254,15 @@ const handler = createMcpHandler(
           .string()
           .describe('Value of the "name" field in package.json'),
       },
-      async ({ install_id, project_name }) => {
+      async ({ install_id, project_name }) =>
+        withTelemetry(
+          {
+            source: "mcp",
+            tool: "flow_status",
+            install_id_hash: hashId(install_id),
+            project_id_hash: hashId(project_name),
+          },
+          async () => {
         const state = await getState(install_id, project_name);
 
         if (!state) {
@@ -275,7 +326,8 @@ const handler = createMcpHandler(
         return {
           content: [{ type: "text", text: lines.join("\n") }],
         };
-      }
+          }
+        )
     );
 
     // ─── flow_setup_provider (generic — handles any registered provider) ────
@@ -311,7 +363,17 @@ const handler = createMcpHandler(
           .string()
           .describe('Value of the "name" field in package.json'),
       },
-      async ({ install_id, provider, environment, project_name }) => {
+      async ({ install_id, provider, environment, project_name }) =>
+        withTelemetry(
+          {
+            source: "mcp",
+            tool: "flow_setup_provider",
+            provider,
+            env: environment,
+            install_id_hash: hashId(install_id),
+            project_id_hash: hashId(project_name),
+          },
+          async () => {
         const config = PROVIDERS[provider];
         if (!config) {
           return {
@@ -421,7 +483,8 @@ const handler = createMcpHandler(
             },
           ],
         };
-      }
+          }
+        )
     );
 
     // ─── flow_setup_oauth (backward-compat alias) ──────────────────────
@@ -440,7 +503,17 @@ const handler = createMcpHandler(
           .string()
           .describe('Value of the "name" field in package.json'),
       },
-      async ({ install_id, environment, project_name }) => {
+      async ({ install_id, environment, project_name }) =>
+        withTelemetry(
+          {
+            source: "mcp",
+            tool: "flow_setup_oauth",
+            provider: "google-oauth-web",
+            env: environment,
+            install_id_hash: hashId(install_id),
+            project_id_hash: hashId(project_name),
+          },
+          async () => {
         // Mirror the flow_setup_provider logic for the Google OAuth case.
         // We don't call the other handler directly because mcp-handler doesn't
         // expose handler chaining; the duplication is the alias's whole job.
@@ -513,7 +586,8 @@ const handler = createMcpHandler(
             },
           ],
         };
-      }
+          }
+        )
     );
   },
   {

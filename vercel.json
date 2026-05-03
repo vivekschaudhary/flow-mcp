@@ -7,6 +7,9 @@
     },
     "api/vault/credentials.ts": {
       "maxDuration": 10
+    },
+    "api/admin/usage.ts": {
+      "maxDuration": 30
     }
   }
 }

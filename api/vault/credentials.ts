@@ -29,6 +29,7 @@
 import { getState, getVault } from "../../src/lib/storage.js";
 import { sharedDevValuesForIntegrations } from "../../src/lib/providers.js";
 import { checkRateLimit, clientIp } from "../../src/lib/ratelimit.js";
+import { logEvent, hashId, detectAiTool } from "../../src/lib/telemetry.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -41,6 +42,7 @@ function jsonResponse(status: number, body: unknown, extraHeaders: Record<string
 }
 
 async function handle(request: Request): Promise<Response> {
+  const start = Date.now();
   const url = new URL(request.url);
   const project = url.searchParams.get("project");
   const envParam = url.searchParams.get("env") || "development";
@@ -48,14 +50,38 @@ async function handle(request: Request): Promise<Response> {
   const auth = request.headers.get("authorization") || "";
   const session = auth.replace(/^Bearer\s+/i, "").trim();
 
-  if (!session) return jsonResponse(401, { error: "missing bearer token" });
-  if (!project) return jsonResponse(400, { error: "missing project query param" });
+  // Telemetry context — populated as we process; logged in finally-style
+  // emit at every return point (one logEvent per response).
+  const tel = {
+    source: "vault" as const,
+    install_id_hash: hashId(session),
+    project_id_hash: hashId(project ?? undefined),
+    env: envParam,
+    ip_country: request.headers.get("x-vercel-ip-country") ?? undefined,
+    ai_tool_hint: detectAiTool(request.headers.get("user-agent")),
+  };
+  const emit = (ok: boolean, errorCode?: string) =>
+    logEvent({
+      ...tel,
+      ts: new Date().toISOString(),
+      ok,
+      latency_ms: Date.now() - start,
+      error_code: errorCode,
+    });
+
+  if (!session) {
+    await emit(false, "missing_bearer");
+    return jsonResponse(401, { error: "missing bearer token" });
+  }
+  if (!project) {
+    await emit(false, "missing_project");
+    return jsonResponse(400, { error: "missing project query param" });
+  }
 
   // Rate limit: per-IP and per-install_id, minute + hour windows.
-  // Tight caps because legitimate flow-vault preload only hits this
-  // once per app boot (cached for the process lifetime).
   const verdict = await checkRateLimit(clientIp(request), session);
   if (!verdict.allowed) {
+    await emit(false, `rate_limit_${verdict.reason}`);
     return jsonResponse(
       429,
       {
@@ -68,8 +94,6 @@ async function handle(request: Request): Promise<Response> {
   }
 
   // Project state determines which providers' env vars to surface.
-  // No state → no configured integrations → empty response. The runtime
-  // degrades gracefully (developer's existing env still works).
   const state = await getState(session, project);
   const configuredIntegrationIds = state
     ? Object.keys(state.integrations).filter(
@@ -77,11 +101,10 @@ async function handle(request: Request): Promise<Response> {
       )
     : [];
 
-  // Stored vault entries (per env). Captured creds, manual overrides, etc.
+  // Stored vault entries (per env).
   const stored = await getVault(session, project, envParam);
 
-  // Shared dev creds — only for env=development. For preview/prod we want
-  // explicit user-owned creds (or nothing). This is the trust boundary.
+  // Shared dev creds — only for env=development.
   const sharedDev =
     envParam === "development"
       ? sharedDevValuesForIntegrations(configuredIntegrationIds)
@@ -90,6 +113,7 @@ async function handle(request: Request): Promise<Response> {
   // Stored takes priority over shared.
   const merged = { ...sharedDev, ...stored };
 
+  await emit(true);
   return jsonResponse(200, merged);
 }
 
