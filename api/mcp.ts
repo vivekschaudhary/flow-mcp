@@ -32,8 +32,42 @@ import {
 } from "../src/lib/storage.js";
 import { PROVIDERS, sharedDevValuesFor } from "../src/lib/providers.js";
 import { logEvent, hashId, type FlowEvent } from "../src/lib/telemetry.js";
+import { ensureTenant, getTenant } from "../src/lib/tenants.js";
 
 const PROVIDER_IDS = Object.keys(PROVIDERS) as [string, ...string[]];
+
+/**
+ * Ensure a tenant record exists for this install_id, touch activity, and
+ * check status. Returns null if the tenant is healthy; returns an MCP-shape
+ * "denied" response if the tenant is disabled (caller should return it).
+ *
+ * Idempotent — safe to call on every authenticated tool.
+ */
+async function checkTenantOrDenied(
+  install_id: string
+): Promise<{ content: { type: "text"; text: string }[] } | null> {
+  await ensureTenant(install_id);
+  const tenant = await getTenant(install_id);
+  if (tenant && tenant.status === "disabled") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: [
+            "✗ This Flow install is disabled.",
+            "",
+            tenant.disabled_reason
+              ? `Reason: ${tenant.disabled_reason}`
+              : "No reason provided.",
+            "",
+            "If you believe this is a mistake, contact vivek@kindtree.us.",
+          ].join("\n"),
+        },
+      ],
+    };
+  }
+  return null;
+}
 
 /**
  * Wrap a tool handler with fire-and-forget telemetry. Captures latency and
@@ -134,6 +168,7 @@ const handler = createMcpHandler(
         // Bootstrap: no install_id yet
         if (!install_id) {
           const newId = generateInstallId();
+          await ensureTenant(newId); // create tenant record for the new install
           return {
             content: [
               {
@@ -170,6 +205,9 @@ const handler = createMcpHandler(
             ],
           };
         }
+
+        const denied = await checkTenantOrDenied(install_id);
+        if (denied) return denied;
 
         const state = await getState(install_id, project_name);
 
@@ -263,6 +301,9 @@ const handler = createMcpHandler(
             project_id_hash: hashId(project_name),
           },
           async () => {
+        const denied = await checkTenantOrDenied(install_id);
+        if (denied) return denied;
+
         const state = await getState(install_id, project_name);
 
         if (!state) {
@@ -374,6 +415,9 @@ const handler = createMcpHandler(
             project_id_hash: hashId(project_name),
           },
           async () => {
+        const denied = await checkTenantOrDenied(install_id);
+        if (denied) return denied;
+
         const config = PROVIDERS[provider];
         if (!config) {
           return {
@@ -514,6 +558,9 @@ const handler = createMcpHandler(
             project_id_hash: hashId(project_name),
           },
           async () => {
+        const denied = await checkTenantOrDenied(install_id);
+        if (denied) return denied;
+
         // Mirror the flow_setup_provider logic for the Google OAuth case.
         // We don't call the other handler directly because mcp-handler doesn't
         // expose handler chaining; the duplication is the alias's whole job.

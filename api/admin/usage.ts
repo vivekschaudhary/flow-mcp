@@ -61,6 +61,7 @@ function aggregate(events: FlowEvent[]) {
   const byCountry: Record<string, number> = {};
   const byAiTool: Record<string, number> = {};
   const byDay: Record<string, number> = {};
+  const byInstall: Record<string, number> = {}; // for top-tenants ranking
   const installSet = new Set<string>();
   const projectSet = new Set<string>();
   const latencies: number[] = [];
@@ -73,7 +74,10 @@ function aggregate(events: FlowEvent[]) {
     if (e.env) byEnv[e.env] = (byEnv[e.env] ?? 0) + 1;
     if (e.ip_country) byCountry[e.ip_country] = (byCountry[e.ip_country] ?? 0) + 1;
     if (e.ai_tool_hint) byAiTool[e.ai_tool_hint] = (byAiTool[e.ai_tool_hint] ?? 0) + 1;
-    if (e.install_id_hash) installSet.add(e.install_id_hash);
+    if (e.install_id_hash) {
+      installSet.add(e.install_id_hash);
+      byInstall[e.install_id_hash] = (byInstall[e.install_id_hash] ?? 0) + 1;
+    }
     if (e.project_id_hash) projectSet.add(e.project_id_hash);
     latencies.push(e.latency_ms);
     if (!e.ok) errors++;
@@ -83,6 +87,16 @@ function aggregate(events: FlowEvent[]) {
   }
 
   const sortedLat = [...latencies].sort((a, b) => a - b);
+
+  // Top 20 install_id_hashes by event count — outliers signal abuse.
+  // NOTE: hashes are pseudonymous; use admin/tenants to disable an outlier
+  // (you'd need the raw install_id to disable, not the hash). For now this
+  // surfaces volume distribution, and the real install_ids appear in
+  // Vercel function logs filtered by hash.
+  const topInstalls = Object.entries(byInstall)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 20)
+    .map(([install_id_hash, count]) => ({ install_id_hash, count }));
 
   return {
     totals: {
@@ -98,6 +112,7 @@ function aggregate(events: FlowEvent[]) {
     by_country: byCountry,
     by_ai_tool: byAiTool,
     by_day: byDay,
+    top_installs_by_volume: topInstalls,
     latency_ms: {
       p50: percentile(sortedLat, 50),
       p95: percentile(sortedLat, 95),

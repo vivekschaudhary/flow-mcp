@@ -30,6 +30,7 @@ import { getState, getVault } from "../../src/lib/storage.js";
 import { sharedDevValuesForIntegrations } from "../../src/lib/providers.js";
 import { checkRateLimit, clientIp } from "../../src/lib/ratelimit.js";
 import { logEvent, hashId, detectAiTool } from "../../src/lib/telemetry.js";
+import { ensureTenant, getTenant } from "../../src/lib/tenants.js";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
@@ -91,6 +92,18 @@ async function handle(request: Request): Promise<Response> {
       },
       { "retry-after": String(verdict.retry_after ?? 60) }
     );
+  }
+
+  // Tenant gate. If admin has disabled this install_id, refuse with 403.
+  // ensureTenant is idempotent + bumps last_active_at.
+  await ensureTenant(session);
+  const tenant = await getTenant(session);
+  if (tenant && tenant.status === "disabled") {
+    await emit(false, "tenant_disabled");
+    return jsonResponse(403, {
+      error: "tenant disabled",
+      reason: tenant.disabled_reason,
+    });
   }
 
   // Project state determines which providers' env vars to surface.
