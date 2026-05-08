@@ -163,14 +163,20 @@ flow-mcp/
 │   └── playbooks/
 │       └── google-oauth-web.json  v1.0.0 — 8 steps, library variants, blocking warnings
 ├── packages/
-│   └── flow-vault/                Runtime preload npm package
-│       ├── index.js               IIFE: keychain → detect → vault → proxy
-│       ├── keychain.js            Sync wrapper around keychain-helper.js
-│       ├── keychain-helper.js     Async keytar bridge (spawned via execFileSync)
-│       ├── vault.js               Sync wrapper around vault-helper.js
-│       ├── vault-helper.js        Async fetch (Node 18+ built-in)
-│       ├── proxy.js               process.env Proxy: dev value wins over vault
-│       └── detect.js              Project name + environment detection
+│   ├── flow-vault/                Runtime preload npm package
+│   │   ├── index.js               IIFE: keychain → detect → vault → proxy
+│   │   ├── keychain.js            Sync wrapper around keychain-helper.js
+│   │   ├── keychain-helper.js     Async keytar bridge (spawned via execFileSync)
+│   │   ├── vault.js               Sync wrapper around vault-helper.js
+│   │   ├── vault-helper.js        Async fetch (Node 18+ built-in)
+│   │   ├── proxy.js               process.env Proxy: dev value wins over vault
+│   │   └── detect.js              Project name + environment detection
+│   └── flow-cli/                  CLI for production credential setup (PR2 of v0.2)
+│       ├── bin/flow.js            Shebang entrypoint; requires dist/index.js
+│       ├── src/index.ts           commander wiring: setup / status / audit / login
+│       ├── src/commands/          setup-production (real), status (real), audit/login (stubs)
+│       ├── src/adapters/          SourceAdapter interface + 5 adapters (aws + hosted real, vault/azure/gcp stubs)
+│       └── src/lib/               manifest read/write, prompts, output, errors, integration defaults
 ├── plugin/                        IDE-side entry point. The .mcp.json snippet
 │   │                              works in any MCP-capable client (Cursor,
 │   │                              Claude Code, Windsurf, VS Code w/ Copilot).
@@ -210,7 +216,7 @@ Out of repo, on the deploy side:
 **Architectural pivot (2026-05-08):** the v0.2 production-setup work moved from "multi-turn MCP tool" to "standalone CLI, MCP redirects." The CLI is canonical; MCP wraps it. Reasoning is in the "Production setup — CLI canonical, MCP redirects" section above. Sequencing:
 
 - **PR1 (✅ shipped 2026-05-08)** — `flow_setup_production` MCP tool registered as a redirector. Returns the directive to run `flow setup production --integration <id>` in the SRE's terminal; does not perform setup. Architectural commitment in place before the CLI exists.
-- **PR2 (in progress)** — `packages/flow-cli/`. Bin entrypoint, `setup production` command (interactive + non-interactive via flags), `status` command, `audit` / `login` stubs. SourceAdapter interface + registry. **AWS Secrets Manager** adapter (real, IAM access keys auth method). HashiCorp Vault / Azure Key Vault / GCP Secret Manager / `flow-hosted` adapters formalized; non-AWS as stubs. `.flow/integrations.json` read/write. Standard libs: `commander`, `inquirer`, `chalk`, `ora`, `@aws-sdk/client-secrets-manager`. ETA depends on review cadence; ~1 week focused.
+- **PR2 (✅ shipped 2026-05-08)** — `packages/flow-cli/`. Bin entrypoint, `setup production` command (interactive + non-interactive via flags), `status` command, `audit` / `login` stubs. `SourceAdapter` interface + registry. **AWS Secrets Manager** adapter live (IAM access keys auth method); OIDC federation visible in the auth picker but stubbed pending the OIDC provider. HashiCorp Vault / Azure Key Vault / GCP Secret Manager / `flow-hosted` adapters formalized; non-AWS / non-hosted as stubs. `.flow/integrations.json` read/write in Shape A (integration-first; per-integration source mixing within an env). Standard libs: `commander`, `@inquirer/prompts`, `chalk`, `ora`, `@aws-sdk/client-secrets-manager`. Schema docs (compliance.md, getting-started.md, source-adapters.md) migrated from Shape B to Shape A in the same PR.
 - **PR3 (v0.3)** — `flow-vault` runtime resolves non-hosted source adapters at app boot. Until this ships, the CLI writes the manifest but the runtime can't yet honor non-hosted sources at production app boot.
 - **OIDC provider infrastructure at `oidc.flow.kindtree.us`** — Flow's own OIDC issuer that mints short-lived JWTs the customer's AWS / Azure / GCP / Vault deployment can federate against (so the customer never holds long-lived Flow credentials). Includes a JWKS endpoint, signing-key rotation, issuer metadata, and per-tenant audience scoping. **~1 week of focused infrastructure work** and **gates every federated-identity production adapter** — without this we ship IAM-access-keys auth for AWS in PR2 (works but requires the SRE to manage long-lived keys); OIDC federation is the recommended path and lands after this infra.
 - `flow_capture` + `flow_setup_provider(production)` for hosted-source production credential intake (the small-team-production path; orthogonal to the CLI)

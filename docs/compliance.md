@@ -8,25 +8,41 @@ Every Flow-enabled project has one of these in its repo. It is the authoritative
 
 ```jsonc
 {
-  "project": "swing-trading-signals",
-  "environments": {
-    "development": {
-      "source": "flow-hosted",
-      "integrations": ["google-oauth-web", "email_provider"]
-    },
-    "preview": {
-      "source": "flow-hosted",
-      "integrations": ["google-oauth-web", "email_provider"]
-    },
-    "production": {
-      "source": "aws-secrets-manager",
-      "config": {
-        "auth": "oidc",
-        "region": "us-east-1",
-        "role_arn": "arn:aws:iam::123456789012:role/flow-prod-read",
-        "secret_path_prefix": "prod/swing-trading-signals/"
+  "integrations": {
+    "google-oauth-web": {
+      "development": {
+        "source": "flow-hosted",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
       },
-      "integrations": ["google-oauth-web", "email_provider", "payments_provider"]
+      "preview": {
+        "source": "aws-secrets-manager",
+        "secretName": "staging/swing-trading-signals/google-oauth",
+        "region": "us-east-1",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
+      },
+      "production": {
+        "source": "aws-secrets-manager",
+        "secretName": "prod/swing-trading-signals/google-oauth",
+        "region": "us-east-1",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
+      }
+    },
+    "email_provider": {
+      "development": {
+        "source": "flow-hosted",
+        "envVars": ["RESEND_API_KEY"],
+        "configured_at": "2026-05-08T18:10:13.257Z"
+      },
+      "production": {
+        "source": "aws-secrets-manager",
+        "secretName": "prod/swing-trading-signals/resend",
+        "region": "us-east-1",
+        "envVars": ["RESEND_API_KEY"],
+        "configured_at": "2026-05-08T18:10:13.257Z"
+      }
     }
   }
 }
@@ -34,8 +50,11 @@ Every Flow-enabled project has one of these in its repo. It is the authoritative
 
 What's in the file:
 
-- The project's identity (matches `package.json` name).
-- Per environment: the source adapter, its non-secret configuration, and the list of integrations the project consumes.
+- Top-level `integrations` map keyed by integration id (e.g. `google-oauth-web`, `email_provider`).
+- For each integration, an entry per environment (`development`, `preview`, `production`).
+- Per entry: the source adapter id (`source`), the env-var names that integration produces in the app's `process.env` (`envVars`), the timestamp the entry was last written (`configured_at`), and source-specific fields — `secretName` and `region` for AWS Secrets Manager; analogous fields land for HashiCorp Vault / Azure Key Vault / GCP Secret Manager when those adapters ship.
+
+This shape supports per-integration source mixing within the same environment. A single production environment can pull `google-oauth-web` from AWS Secrets Manager and `stripe` from HashiCorp Vault — each integration declares its own source.
 
 What is **not** in the file:
 
@@ -50,12 +69,12 @@ For a SOC 2 — or any control framework that asks the same questions in differe
 
 | Question | Where the manifest answers it |
 |---|---|
-| What production credentials does this application consume? | `environments.production.integrations` (by name; values stay in your store) |
-| Where do those credentials live? | `environments.production.source` |
-| How does the application authenticate to that source? | `environments.production.config.auth` |
-| Is the principal scoped — least privilege? | `role_arn` / `secret_path_prefix` (or equivalent per source) |
+| What production credentials does this application consume? | The keys of `integrations` and the `envVars` array on each `production` entry (names; values stay in your store) |
+| Where do those credentials live? | The `source` field on each `production` entry (e.g. `aws-secrets-manager`) |
+| How does the application authenticate to that source? | The auth method used by your compute (read from your IAM, not the manifest — manifest declares which source, your IAM controls how) |
+| Is the principal scoped — least privilege? | The `secretName` is the resource boundary; verify your IAM policy grants read access only to those secrets |
 | Who approved this configuration? | The PR that added or changed the manifest entry |
-| When was it last reviewed? | Git history of the file |
+| When was it last reviewed? | Git history of the file; `configured_at` is also written into each entry on every change |
 
 A reviewer who has never seen the codebase can answer these in five minutes by reading one file plus its commit history. That is the unlock.
 
@@ -81,7 +100,7 @@ For the hosted source: Flow is on both paths. This is appropriate for developmen
 
 ## Planned: `flow audit`
 
-The `flow audit` command (planned, v1) reads the manifest and verifies it against the actual store:
+The `flow audit` command (planned, v0.2.1) reads the manifest and verifies it against the actual store:
 
 - For each integration declared in the manifest, does the configured store have the keys present?
 - Does the configured IAM role have read access to exactly that path / namespace and no more?
@@ -106,11 +125,11 @@ If your compliance program requires any of these, the path is the source adapter
 
 A pragmatic review checklist:
 
-1. Read `.flow/integrations.json` for the project. Note the `production.source` and the `integrations` list.
-2. If `production.source != "flow-hosted"`: verify the IAM role / token / identity has *read-only* access scoped to exactly the path declared. Reject manifest changes that broaden scope without justification in the PR.
-3. If `production.source == "flow-hosted"` *and* the project is in scope for your compliance program: this is a finding. Migrate to a customer-owned source.
-4. Compare the integrations list to what the application actually does. Surplus integrations are the most common drift.
-5. For each integration, confirm the corresponding secret exists in the configured store at the declared path.
+1. Read `.flow/integrations.json` for the project. List the integrations and the `source` configured for each in `production`.
+2. For every integration whose `production.source != "flow-hosted"`: verify the IAM role / token / identity backing your compute has *read-only* access scoped to exactly the `secretName` (or equivalent path) declared. Reject manifest changes that broaden scope without justification in the PR.
+3. For every integration whose `production.source == "flow-hosted"` *and* the project is in scope for your compliance program: that's a finding. Migrate to a customer-owned source by re-running `flow setup production --integration <id>` and selecting your store.
+4. Compare the integration list to what the application actually does at runtime. Surplus integrations are the most common drift.
+5. For each integration, confirm the corresponding secret exists in the configured store at the declared `secretName`, and the `envVars` declared match what the application reads from `process.env`.
 
 ## Contact
 

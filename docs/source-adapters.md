@@ -39,26 +39,44 @@ This document is the architectural reference for the source adapter pattern: the
 
 The Proxy contract is invariant. The adapter contract is the hand-off point — everything below the adapter is store-specific; everything above is uniform.
 
-## The adapter interface (planned, v0.2)
+## The adapter interface (shipped, v0.2)
+
+The CLI's `SourceAdapter` interface (in [packages/flow-cli/src/adapters/index.ts](../packages/flow-cli/src/adapters/index.ts)) is the authoritative shape. Used by the CLI today; the v0.3 runtime will share the same contract for app-boot resolution.
 
 ```ts
-interface SourceAdapter {
-  // Identifier the runtime resolves from .flow/integrations.json.
-  readonly id: string;
+type AdapterStatus = "live" | "stub";
 
-  // Called once at preload, in the user's app process.
-  // Returns the credential map for (project, environment).
-  // Synchronous from the caller's perspective; adapters that need
-  // async I/O bridge it via execFileSync the same way the hosted
-  // adapter does today.
-  fetch(opts: {
-    project: string;     // from package.json name
-    environment: string; // "development" | "preview" | "production"
-  }): Record<string, string>;
+interface AuthMethod {
+  id: string;            // 'iam-access-keys', 'oidc-federation', etc.
+  displayName: string;
+  status: AdapterStatus;
+  hint?: string;         // shown in the picker, e.g. '(planned, v0.3)'
+  description?: string;
+}
+
+interface SourceAdapter {
+  id: string;            // 'aws-secrets-manager'
+  displayName: string;   // 'AWS Secrets Manager'
+  status: AdapterStatus;
+  pickerHint?: string;
+  authMethods: AuthMethod[];
+
+  // Each adapter owns its own credential UX
+  promptCredentials(authMethodId: string): Promise<AuthCredentials>;
+
+  // Discovery + validation
+  listSecrets(creds: AuthCredentials): Promise<SecretSummary[]>;
+  validateAccess(creds: AuthCredentials, secretName: string): Promise<ValidationResult>;
+
+  // Resolve a secret's contents to env-var map (used by validation in
+  // the CLI; used at app boot in v0.3 by flow-vault).
+  resolveSecret(creds: AuthCredentials, secretName: string): Promise<Record<string, string>>;
 }
 ```
 
-Today the runtime hard-codes the `flow-hosted` adapter. The interface is finalized in v0.2 alongside the first non-hosted adapter (AWS Secrets Manager). The contract for any adapter:
+The CLI uses every method except `resolveSecret` (it could; today it just validates). The v0.3 runtime will lean on `resolveSecret` for the credential map at app boot. The interface is small enough that bespoke adapters are practical to implement — open an issue if your store isn't in the live or planned list.
+
+Contract for any adapter:
 
 - **Pure read.** Adapters never write to the store from the runtime. Writes happen via Flow's MCP tools (which call the AI's IDE → store-specific paths) or out-of-band (existing IaC, console, CLI).
 - **No persistent state on disk.** The credential map lives in process memory only.
@@ -91,86 +109,103 @@ flow-vault preload
 
 The hosted source is the right choice for: solo developers, small teams, the development environment of any team, and projects that don't yet have a production secrets store.
 
-### `aws-secrets-manager` (planned v0.2)
+### `aws-secrets-manager` (v0.2 — shipped in PR2)
 
-The first non-hosted adapter. Authentication via **OIDC federation** — your compute platform (Vercel, Cloud Run, ECS, EKS, GitHub Actions) presents a short-lived OIDC token; AWS exchanges it for temporary IAM credentials scoped to a role you control.
+The first non-hosted adapter. Two auth methods:
 
-```ts
-// .flow/integrations.json
+- **IAM access keys** — long-lived `FLOW_AWS_ACCESS_KEY_ID` / `FLOW_AWS_SECRET_ACCESS_KEY`. The CLI adapter (`packages/flow-cli/`) uses these today; the v0.3 runtime will too. Works everywhere; requires the SRE to manage key rotation. Available now.
+- **OIDC federation (recommended)** — your compute platform (Vercel, Cloud Run, ECS, EKS, GitHub Actions) presents a short-lived OIDC token; AWS exchanges it for temporary IAM credentials scoped to a role you control. **Requires Flow's OIDC provider at `oidc.flow.kindtree.us`, which is not yet deployed (planned v0.3).** Until the provider exists, the CLI surfaces a clear error pointing the SRE at IAM access keys for now.
+
+The CLI writes the manifest entry per-integration in Shape A:
+
+```jsonc
+// .flow/integrations.json (after `flow setup production --integration google-oauth-web`)
 {
-  "production": {
-    "source": "aws-secrets-manager",
-    "config": {
-      "auth": "oidc",
-      "region": "us-east-1",
-      "role_arn": "arn:aws:iam::123456789012:role/flow-prod-read",
-      "secret_path_prefix": "prod/swing-trading-signals/"
+  "integrations": {
+    "google-oauth-web": {
+      "production": {
+        "source": "aws-secrets-manager",
+        "secretName": "prod/swing-trading-signals/google-oauth",
+        "region": "us-east-1",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
+      }
     }
   }
 }
 ```
 
-At preload the adapter:
+At app boot (v0.3), the runtime will:
 
-1. Reads the platform's OIDC token (`AWS_ROLE_ARN` + `AWS_WEB_IDENTITY_TOKEN_FILE`, or platform-specific equivalents).
-2. Calls `sts:AssumeRoleWithWebIdentity` to mint short-lived credentials.
-3. Calls `secretsmanager:GetSecretValue` for every secret matching `prod/swing-trading-signals/*`.
-4. Parses each (JSON or string) and merges into the credential map.
+1. Read the manifest entry for the configured integration + environment.
+2. Read AWS credentials from the deployment env (`FLOW_AWS_ACCESS_KEY_ID` / `FLOW_AWS_SECRET_ACCESS_KEY` for IAM; OIDC token for federation).
+3. Call `secretsmanager:GetSecretValue` for the `secretName` declared in the manifest.
+4. JSON-parse the secret payload and merge it into the credential map under the `envVars` declared.
 
-Fallback: long-lived IAM access keys via env. Discouraged but supported for compute that can't speak OIDC.
-
-**Flow does not see your production credentials.** The runtime authenticates to AWS using your role; AWS hands the values back to your process; the adapter merges them into the Proxy. Flow's hosted infrastructure is not on the request path.
+**Flow does not see your production credentials.** The runtime authenticates to AWS using your IAM; AWS hands the values back to your process; the adapter merges them into the Proxy. Flow's hosted infrastructure is not on the request path.
 
 ### `hashicorp-vault` (planned v0.3)
 
-```ts
+```jsonc
 {
-  "production": {
-    "source": "hashicorp-vault",
-    "config": {
-      "auth": "kubernetes",          // or "aws", "oidc", "approle"
-      "address": "https://vault.example.com",
-      "mount_path": "kv/swing-trading-signals/prod"
+  "integrations": {
+    "google-oauth-web": {
+      "production": {
+        "source": "hashicorp-vault",
+        "vaultAddress": "https://vault.example.com",
+        "mountPath": "kv/swing-trading-signals/google-oauth",
+        "authMethod": "kubernetes",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-…"
+      }
     }
   }
 }
 ```
 
-Authentication via whatever auth method your Vault deployment already uses. Adapter calls `auth.<method>.login` for a Vault token, then `kv-v2.read` for the configured path.
+Authentication via whatever auth method your Vault deployment already uses (Kubernetes auth, AppRole, OIDC, raw token). The runtime calls `auth.<method>.login` for a Vault token, then `kv-v2.read` for the configured path.
 
 ### `azure-key-vault` (planned v0.3)
 
-```ts
+```jsonc
 {
-  "production": {
-    "source": "azure-key-vault",
-    "config": {
-      "auth": "managed_identity",    // or "service_principal"
-      "vault_url": "https://swing-trading-signals.vault.azure.net",
-      "secret_prefix": "prod-"
+  "integrations": {
+    "google-oauth-web": {
+      "production": {
+        "source": "azure-key-vault",
+        "vaultUrl": "https://swing-trading-signals.vault.azure.net",
+        "secretName": "google-oauth",
+        "authMethod": "managed-identity",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-…"
+      }
     }
   }
 }
 ```
 
-Managed identity is the recommended path on Azure compute (Functions, Container Apps, App Service, AKS). The adapter calls `IMDS` for a token and `Get Secret` for each prefixed secret.
+Managed identity is the recommended path on Azure compute (Functions, Container Apps, App Service, AKS). The adapter calls IMDS for a token and `Get Secret` for the configured name.
 
 ### `gcp-secret-manager` (planned v0.3)
 
-```ts
+```jsonc
 {
-  "production": {
-    "source": "gcp-secret-manager",
-    "config": {
-      "auth": "workload_identity",   // or "service_account_json"
-      "project": "my-gcp-project",
-      "secret_filter": "labels.app=swing-trading-signals AND labels.env=production"
+  "integrations": {
+    "google-oauth-web": {
+      "production": {
+        "source": "gcp-secret-manager",
+        "project": "my-gcp-project",
+        "secretName": "prod-google-oauth",
+        "authMethod": "workload-identity",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-…"
+      }
     }
   }
 }
 ```
 
-Workload identity (GKE / Cloud Run / Cloud Functions) lets the adapter authenticate without a service account key on disk. The adapter lists secrets matching the filter and reads each.
+Workload identity (GKE / Cloud Run / Cloud Functions) lets the adapter authenticate without a service account key on disk. The adapter reads the latest version of the named secret.
 
 ## Why ownership matters in production
 
@@ -226,31 +261,33 @@ Flow does not push you off the hosted source. It also doesn't try to convince yo
 
 ## Migration cost: zero
 
-Swapping a source is a one-line change in `.flow/integrations.json`. Application code is untouched. The Proxy contract on `process.env` is invariant. Library code that reads `process.env.GOOGLE_CLIENT_ID` doesn't know — and shouldn't know — where the value came from.
+Swapping a source is a few lines in `.flow/integrations.json`. Application code is untouched. The Proxy contract on `process.env` is invariant. Library code that reads `process.env.GOOGLE_CLIENT_ID` doesn't know — and shouldn't know — where the value came from.
 
 ```diff
-  "production": {
--   "source": "flow-hosted",
-+   "source": "aws-secrets-manager",
-+   "config": {
-+     "auth": "oidc",
-+     "region": "us-east-1",
-+     "role_arn": "arn:aws:iam::123456789012:role/flow-prod-read",
-+     "secret_path_prefix": "prod/swing-trading-signals/"
-+   },
-    "integrations": ["google-oauth-web", "email_provider"]
-  }
+   "google-oauth-web": {
+     "production": {
+-      "source": "flow-hosted",
+-      "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+-      "configured_at": "2026-…"
++      "source": "aws-secrets-manager",
++      "secretName": "prod/swing-trading-signals/google-oauth",
++      "region": "us-east-1",
++      "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
++      "configured_at": "2026-…"
+     }
+   }
 ```
 
-The cost of switching sources is the cost of populating the new store with the same key set. The runtime, the application, and the developer experience don't change.
+In practice you don't hand-edit this — `flow setup production --integration <id>` walks the SRE through the change and writes the diff. The cost of switching sources is the cost of populating the new store with the same key set. The runtime, the application, and the developer experience don't change.
 
 ## Status
 
 | Adapter | Status |
 |---|---|
-| `flow-hosted` | ✅ Shipped. Today the runtime is hard-wired to this. |
-| Adapter interface | 🚧 Planned v0.2. Until shipped, the runtime hard-codes the hosted source. |
-| `aws-secrets-manager` | 🚧 Planned v0.2. First non-hosted adapter. |
-| `hashicorp-vault` / `azure-key-vault` / `gcp-secret-manager` | 🗓 Planned v0.3. |
+| `flow-hosted` | ✅ Shipped. Both as the runtime's hard-wired source today, and as a formal CLI adapter in v0.2 (PR2). |
+| `SourceAdapter` interface | ✅ Shipped in v0.2 (PR2) inside `packages/flow-cli/`. Used today by the CLI; the v0.3 runtime will share the contract. |
+| `aws-secrets-manager` | ✅ Shipped in v0.2 (PR2) — IAM access keys live; OIDC federation stubbed pending the Flow OIDC provider. |
+| `hashicorp-vault` / `azure-key-vault` / `gcp-secret-manager` | 🗓 Planned v0.3. CLI surfaces them as stubs today (visible in the source picker; selecting one prints a clear "planned v0.3" error). |
+| `flow-vault` runtime resolves non-hosted adapters | 🗓 Planned v0.3 (PR3). Until then, the CLI writes correct manifest entries but production app boots still pull from the hosted source. |
 
 The ordering follows demand from the early-access cohort. Open an issue or email `vivek@kindtree.us` if your store isn't in this list — the adapter interface is small enough that bespoke adapters are practical for individual customers.

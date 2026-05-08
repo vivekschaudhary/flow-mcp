@@ -1,0 +1,51 @@
+{
+  "name": "flow-cli",
+  "version": "0.0.1",
+  "description": "Flow CLI — production credential setup for projects using flow-vault. Runs locally on the SRE's machine; configures source adapters (AWS Secrets Manager today; HashiCorp Vault, Azure Key Vault, GCP Secret Manager planned) and writes the .flow/integrations.json manifest.",
+  "type": "module",
+  "bin": {
+    "flow": "./bin/flow.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "start": "node ./bin/flow.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "@inquirer/prompts": "^7.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vivekschaudhary/flow-mcp.git",
+    "directory": "packages/flow-cli"
+  },
+  "homepage": "https://github.com/vivekschaudhary/flow-mcp/tree/main/packages/flow-cli",
+  "bugs": "https://github.com/vivekschaudhary/flow-mcp/issues",
+  "keywords": [
+    "cli",
+    "secrets",
+    "flow",
+    "flow-vault",
+    "aws-secrets-manager"
+  ],
+  "license": "MIT",
+  "author": "Vivek Chaudhary <vivek@kindtree.us>"
+}

@@ -130,20 +130,27 @@ The output of this conversation is one file in your repo: `.flow/integrations.js
 
 ```jsonc
 {
-  "project": "swing-trading-signals",
-  "environments": {
-    "development": {
-      "source": "flow-hosted",
-      "integrations": ["google-oauth-web", "email_provider"]
-    },
-    "production": {
-      "source": "aws-secrets-manager",
-      "config": {
-        "auth": "oidc",
-        "region": "us-east-1",
-        "secret_path_prefix": "prod/swing-trading-signals/"
+  "integrations": {
+    "google-oauth-web": {
+      "development": {
+        "source": "flow-hosted",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
       },
-      "integrations": ["google-oauth-web", "email_provider", "payments_provider"]
+      "production": {
+        "source": "aws-secrets-manager",
+        "secretName": "prod/swing-trading-signals/google-oauth",
+        "region": "us-east-1",
+        "envVars": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+        "configured_at": "2026-05-08T18:08:48.652Z"
+      }
+    },
+    "email_provider": {
+      "development": {
+        "source": "flow-hosted",
+        "envVars": ["RESEND_API_KEY"],
+        "configured_at": "2026-05-08T18:10:13.257Z"
+      }
     }
   }
 }
