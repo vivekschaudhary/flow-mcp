@@ -14,7 +14,7 @@
  *   2. For env="development" only: merge in shared dev values from Flow's
  *      server env (e.g. FLOW_GOOGLE_CLIENT_ID → GOOGLE_CLIENT_ID).
  *   3. For env="preview"/"production": shared dev values are NOT included.
- *      Only what's been explicitly stored in the vault (post-M2.5 user-owned).
+ *      Only what's been explicitly stored in the vault (post-v0.2 user-owned).
  *   4. Stored vault entries always take priority on overlap.
  *
  * Scoping: only providers the project has configured contribute env vars.

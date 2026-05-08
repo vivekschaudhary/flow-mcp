@@ -4,12 +4,19 @@
  * Deployed at https://mcp.kindtree.us/api/mcp via Vercel Functions.
  *
  * Tools served:
- *   flow_status_check   — connectivity probe (returns server build state)
- *   flow_check          — read state for a project from KV
- *   flow_status         — verbose project health
- *   flow_setup_oauth    — store Google dev creds in vault, instruct Claude to
- *                         install flow-vault and wire --require into the start
- *                         script. Production path is M2.5 — returns "coming soon".
+ *   flow_status_check     — connectivity probe (returns server build state)
+ *   flow_check            — read state for a project from KV
+ *   flow_status           — verbose project health
+ *   flow_setup_provider   — store dev creds for a registered provider in the
+ *                           hosted vault, instruct the AI to install flow-vault
+ *                           and wire --require into the start script.
+ *   flow_setup_oauth      — backward-compat alias for flow_setup_provider with
+ *                           provider="google-oauth-web".
+ *   flow_setup_production — REDIRECTS to the flow CLI. Production credential
+ *                           setup is a CLI workflow by design (hidden input,
+ *                           shell history audit trail, scriptability) — this
+ *                           tool returns the directive to run the CLI in the
+ *                           SRE's terminal. The CLI ships in v0.2.
  *
  * The runtime model:
  *   - Each project on the developer's machine has an `install_id` (a UUID).
@@ -119,13 +126,16 @@ const handler = createMcpHandler(
                 "✓ Flow is online.",
                 "",
                 "Live tools:",
-                "  flow_check          — project + integration status",
-                "  flow_status         — verbose project health",
-                "  flow_setup_provider — store dev creds in vault (google-oauth-web, email_provider)",
-                "  flow_setup_oauth    — backward-compat alias for Google OAuth",
+                "  flow_check            — project + integration status",
+                "  flow_status           — verbose project health",
+                "  flow_setup_provider   — store dev creds in vault (google-oauth-web, email_provider)",
+                "  flow_setup_oauth      — backward-compat alias for Google OAuth",
+                "  flow_setup_production — directs you to the flow CLI for production setup",
                 "",
-                "Production setup (environment='production'), credential capture from JSON,",
-                "and additional providers (Stripe, Twilio, etc.) are planned for M2.5+.",
+                "Production credential setup is handled by the flow CLI, not this MCP server.",
+                "Call flow_setup_production for the redirect; the CLI ships in v0.2.",
+                "",
+                "Credential capture from JSON and additional providers (Stripe, Twilio, etc.) are planned for v0.2+.",
               ].join("\n"),
             },
           ],
@@ -382,7 +392,7 @@ const handler = createMcpHandler(
         "Set up an integration for a project by storing its credentials in the Flow vault.",
         `Supported providers: ${PROVIDER_IDS.join(", ")}.`,
         "In environment='development' (the only live mode), Flow's shared dev credentials are stored in the project's vault and made available at runtime via flow-vault.",
-        "Production setup (environment='production') is planned for M2.5 and currently returns 'coming soon'.",
+        "Production setup (environment='production') is planned for v0.2 and currently returns 'coming soon'.",
         "ALWAYS pass install_id, project_name, and provider.",
       ].join(" "),
       {
@@ -438,7 +448,7 @@ const handler = createMcpHandler(
               {
                 type: "text",
                 text: [
-                  `Production setup for ${config.name} is planned for the next milestone (M2.5).`,
+                  `Production setup for ${config.name} is planned for v0.2.`,
                   "",
                   "For now, use environment='development' to get Flow's shared dev credentials",
                   "into the vault. Production setup will guide you through the provider's",
@@ -531,6 +541,94 @@ const handler = createMcpHandler(
         )
     );
 
+    // ─── flow_setup_production (CLI redirector) ───────────────────────
+    //
+    // Production credential setup is a CLI workflow by design — hidden
+    // credential entry, shell history audit trail, scriptability. This MCP
+    // tool does NOT try to walk the SRE through prompts conversationally;
+    // it returns the directive to run the flow CLI in their terminal.
+    //
+    // The CLI itself ships in v0.2 (packages/flow-cli, separate PR). Until
+    // then, this tool documents the workflow and tells the SRE that
+    // production setup is not yet available.
+    //
+    // Architectural commitment: the CLI is canonical for production work.
+    // MCP is one surface among several (CLI, MCP wrapper, future REST API).
+    // Same logic, single implementation in the CLI; MCP wraps and redirects.
+    server.tool(
+      "flow_setup_production",
+      [
+        "Set up production credentials for a project's integration.",
+        "This tool does NOT perform setup — it returns the directive to run the flow CLI in your terminal.",
+        "Production credential setup is a CLI workflow by design (hidden input, audit trail, scriptability).",
+        "Pass install_id, project_name, and the integration id (e.g. 'google-oauth-web').",
+        "If you intended development setup, use flow_setup_provider with environment='development' instead.",
+      ].join(" "),
+      {
+        install_id: z
+          .string()
+          .describe("Install ID from .flow/install.json"),
+        project_name: z
+          .string()
+          .describe('Value of the "name" field in package.json'),
+        integration: z
+          .string()
+          .describe(
+            'The integration id to set up for production (e.g. "google-oauth-web", "email_provider"). Free-form — the CLI validates against its registered adapters and providers.'
+          ),
+      },
+      async ({ install_id, project_name, integration }) =>
+        withTelemetry(
+          {
+            source: "mcp",
+            tool: "flow_setup_production",
+            provider: integration,
+            env: "production",
+            install_id_hash: hashId(install_id),
+            project_id_hash: hashId(project_name),
+          },
+          async () => {
+            const denied = await checkTenantOrDenied(install_id);
+            if (denied) return denied;
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: [
+                    `Production setup for "${integration}" in project "${project_name}" is a CLI workflow, not a chat workflow. To configure it, the developer or SRE should run:`,
+                    "",
+                    `    flow setup production --integration ${integration}`,
+                    "",
+                    "in their terminal.",
+                    "",
+                    "─── Why CLI, not chat ───",
+                    "Production credential entry needs:",
+                    "  • Hidden input — terminal password mode keeps secret values out of scrollback",
+                    "  • Shell history — audit trail for who ran what, when",
+                    "  • Scriptability — the same setup can be re-run non-interactively in CI / runbooks",
+                    "A multi-turn MCP tool can't deliver any of those.",
+                    "",
+                    "─── What the CLI does ───",
+                    "  • Walks through source adapter choice (AWS Secrets Manager today; HashiCorp Vault, Azure Key Vault, GCP Secret Manager planned)",
+                    "  • Takes credentials in hidden input — never echoed",
+                    "  • Validates the IAM role / token / identity has read access before writing anything",
+                    "  • Writes .flow/integrations.json — committable manifest, contains zero secret values",
+                    "  • Prints next steps for deploy (which env vars to set, where)",
+                    "",
+                    "─── Status (2026-05-08) ───",
+                    "🚧 The flow CLI ships in v0.2 (currently in active development at packages/flow-cli/). If `flow` is not yet on the developer's PATH, production setup is not yet available — point them at flow_setup_provider with environment='development' for the dev sandbox in the meantime.",
+                    "",
+                    "─── For the AI calling this tool ───",
+                    "Do NOT try to walk the developer through production setup conversationally. Do NOT ask them for AWS access keys or any secret in chat. If they don't have the CLI yet, tell them production setup is coming in v0.2 and offer to set up development with flow_setup_provider instead.",
+                  ].join("\n"),
+                },
+              ],
+            };
+          }
+        )
+    );
+
     // ─── flow_setup_oauth (backward-compat alias) ──────────────────────
     //
     // Existing SKILL.md, agents, and prior conversations know about this name.
@@ -572,7 +670,7 @@ const handler = createMcpHandler(
             content: [
               {
                 type: "text",
-                text: `Production setup for ${config.name} is planned for M2.5. Use environment='development' for now.`,
+                text: `Production setup for ${config.name} is planned for v0.2. Use environment='development' for now.`,
               },
             ],
           };

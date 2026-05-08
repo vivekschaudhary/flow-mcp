@@ -1,71 +1,79 @@
-# Flow — Integration OS for AI-built software
+# Flow — Integration plugin for AI-coding IDEs
 
-**Flow is the layer Claude calls so developers never leave their conversation to set up integrations.**
+**Flow is the layer your AI IDE calls so you never leave your conversation to set up integrations.**
 
-When you're building with Claude and you need Google OAuth, Stripe, Twilio, or any third-party service — Flow handles the whole flow. No provider consoles. No copy-pasting credentials. No reading docs that don't quite match your stack. Just say what you want, and Claude wires it up.
+Working with Claude Code, Cursor, Windsurf, or VS Code (with MCP-enabled Copilot)? Ask the AI for Google sign-in or transactional email and Flow handles the credential side: dev creds appear in your app's `process.env` at boot, **never in a `.env` file**, never pasted into chat. No provider consoles. No copy-pasting secrets.
+
+## What's live today
+
+Two providers, development environment only. Be skeptical of any doc that claims more than this.
+
+| Provider id | Provider | Status |
+|---|---|---|
+| `google-oauth-web` | Google OAuth (Web sign-in) | ✅ Live (development) |
+| `email_provider` | Transactional email (Resend under the hood) | ✅ Live (development) |
+| Stripe / Auth0 / AWS S3 / Pusher / Twilio | Various | 🚧 Planned (v0.2 / v0.3) |
+| Production credential intake (`flow_capture`, `flow_setup_provider(production)`) | — | 🚧 Planned (v0.2) |
 
 ## Install
 
-```
-/plugin install flow@claude-community
-```
+The plugin's `.mcp.json` snippet works in any MCP-capable IDE — see the repo root [README.md](../README.md#quick-start-works-in-any-mcp-capable-ai-tool) for the per-tool config path (Cursor, Claude Code, Windsurf, VS Code).
 
-That's it. Browser opens, GitHub login, Flow is live in every project — no npm install, no local server, no configuration files.
+If you're on the standalone Claude Code CLI, the marketplace install also works and adds proactive auto-trigger via the bundled SKILL.md:
+
+```
+/plugin marketplace add vivekschaudhary/flow-mcp
+/plugin install flow@flow-marketplace
+```
 
 ## Use
 
-Just ask Claude in plain language:
+Ask the AI in plain language:
 
 ```
 Set up Google OAuth for development.
 ```
 
-Claude calls Flow, the dev credentials land in your project's `.env` / `.env.local`, and you can immediately trigger a Google login. It works.
+What happens:
 
-When you're ready to ship:
+1. AI calls `flow_check` to bootstrap your project (writes `.flow/install.json`, generates an install id) and verify the integration isn't already configured.
+2. AI calls `flow_setup_provider(provider="google-oauth-web", environment="development")`. Flow's hosted server stores its shared dev credentials in your project's vault namespace.
+3. AI runs `npm install --save-dev flow-vault` and adds `NODE_OPTIONS='--require=flow-vault'` to your dev script in `package.json`.
+4. You restart your dev server. `process.env.GOOGLE_CLIENT_ID` and `process.env.GOOGLE_CLIENT_SECRET` resolve from the vault at boot. **No `.env` line is written.**
 
-```
-Set up Google OAuth for production.
-```
+For email (Resend), substitute `set up email for development` and read the AI's reply for the from-address constraints (sends from `onboarding@resend.dev` while in dev).
 
-Claude gives you the exact values to paste into Google Cloud Console. The moment you download the credentials JSON, Flow captures it, syncs to your local env, and pushes to Vercel.
+Production setup is planned for v0.2 and currently returns "coming soon."
 
-## What's currently supported
+## Live MCP tools (called by the AI, not by you)
 
-| Provider | Status |
-|---|---|
-| **Google OAuth** (Web) | ✅ Available — playbook v1.0.0 |
-| Stripe | 🚧 Playbook in progress |
-| Twilio | 🚧 Playbook in progress |
-| Resend | 🚧 Playbook in progress |
-| AWS S3 | 🚧 Playbook in progress |
-| Auth0 | 🚧 Playbook in progress |
-
-## Tools the plugin exposes (called by Claude, not by you)
-
-- `flow_check` — what's configured for this project
-- `flow_setup` — run a playbook for an integration
-- `flow_setup_oauth` — Google OAuth fast path
-- `flow_capture` — extract credentials from a downloaded provider JSON
-- `flow_sync` — push credentials to all environments
-- `flow_status` — full project integration health
+| Tool | Status | What it does |
+|---|---|---|
+| `flow_status_check` | ✅ Live | Connectivity probe |
+| `flow_check` | ✅ Live | Project + integration status; bootstraps `install_id` on first call |
+| `flow_status` | ✅ Live | Verbose project health |
+| `flow_setup_provider` | ✅ Live (development only) | Generic — `provider` ∈ {`google-oauth-web`, `email_provider`} |
+| `flow_setup_oauth` | ✅ Live (alias) | Backward-compat alias for `flow_setup_provider(provider="google-oauth-web")` |
+| `flow_setup_provider(environment="production")` | 🚧 Planned (v0.2) | Returns "coming soon" today |
+| `flow_capture` | 🚧 Planned (v0.2) | Will extract creds from a downloaded provider JSON |
+| `flow_sync` | ❌ Removed | Runtime injection makes env-push obsolete; Flow delivers at app boot |
 
 ## How it works
 
-Flow runs as a hosted MCP service at `https://mcp.kindtree.us`. The plugin you just installed is a thin pointer to that service — Claude Code connects, you sign in once with GitHub, and Flow's tool surface becomes available in every project on your machine.
+Flow runs as a hosted MCP service at `https://mcp.kindtree.us`. The plugin's `.mcp.json` is a thin pointer to that service — your IDE connects, your AI's tool surface gains the `flow_*` tools, and any project on your machine can use them.
 
-The hosted server holds Flow's shared development OAuth credentials (limited to `openid email profile` scope, monitored, kill-switchable). When you ask Claude for Google OAuth in development, Flow's server returns those credentials to Claude, which writes them into your project's `.env` file. The credentials are shared across all Flow users by design — Flow's value is operating the OAuth client for you, not generating a unique one per developer.
+The hosted server holds Flow's shared development credentials (Google OAuth client limited to `openid email profile`; Resend key restricted to a no-verified-domains account — both monitored, kill-switchable). When the AI asks Flow for a development integration, the server stores the relevant env-var map in your project's vault entry. The `flow-vault` runtime preload (`npm install --save-dev flow-vault` + `--require=flow-vault` in your start script) fetches that map at app boot and injects it into `process.env` via a Proxy. **Credentials never touch your filesystem.**
 
-For production, the credentials are *yours*. You create the OAuth client in your own Google Cloud Console (Flow guides you through it with pre-filled values); the resulting credentials are stored only on your machine (`.flow/credentials.json`, gitignored) and pushed to your deployment platform (Vercel today, more coming).
+For production: production credential intake is on the v0.2 roadmap. The longer-term picture is the *source adapter pattern* — Flow injects from whichever secrets store you already operate (AWS Secrets Manager, HashiCorp Vault, Azure Key Vault, GCP Secret Manager) using your IAM, so Flow never sees production credential values. See [docs/source-adapters.md](../docs/source-adapters.md).
 
 ## Trust model — read this before you install
 
-There are **two kinds of credentials** Flow handles, and they have very different threat models:
+Two kinds of credentials, very different threat models:
 
-1. **Flow shared dev credentials** (one pair, used by every Flow user). These are operated by Flow at `mcp.kindtree.us` — never shipped to your machine in source form. They are deliberately shared across users (limited scope, monitored, rotatable). Equivalent to Stripe's test-mode keys.
-2. **Your production credentials** (one pair per project, generated by you in your own provider console). These never touch Flow's infrastructure. Flow only orchestrates capture and sync; the secrets remain solely on your machine and your deployment platform.
+1. **Flow shared dev credentials** (one set per provider, used by every Flow user). Operated by Flow at `mcp.kindtree.us` — never shipped to your machine in source form. Deliberately shared (limited scope, monitored, rotatable). Equivalent to Stripe's test-mode keys.
+2. **Your production credentials** (per-tenant, real secrets). Production intake is planned for v0.2. With the hosted source: stored in Flow's KV under your install + project + `production`. With non-hosted source adapters (planned v0.2 / v0.3): Flow never sees the values — the runtime authenticates to your store using your IAM. Either way: never on your filesystem, never in `.env`, never echoed in chat.
 
-If you don't trust Flow to operate a small set of shared dev OAuth clients on your behalf, don't install the plugin. If you do, you get a one-command install and you never see a provider console for development OAuth again.
+If you don't trust Flow to operate a small set of shared dev credentials on your behalf, don't install. If you do, you get one MCP-config snippet and you stop visiting provider consoles for development OAuth.
 
 ## License
 

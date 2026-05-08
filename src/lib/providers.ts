@@ -106,7 +106,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
       "  });",
       "For production, verify your own domain in the Resend dashboard and",
       "use it as the `from` address — your own RESEND_API_KEY at that point",
-      "will come from flow_capture (M2.5).",
+      "will come from flow_capture (v0.2).",
     ].join("\n"),
   },
 };

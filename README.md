@@ -2,15 +2,53 @@
 
 **Stay in it.**
 
-Flow is a hosted credential vault that plugs into any AI coding tool with MCP support — Claude Code, Cursor, Windsurf. You ask the AI to set up Google OAuth (or Stripe, or any integration). The AI calls Flow. Credentials appear in your app at runtime, in memory only — never written to a `.env` file, never pasted into chat. You stay in conversation.
+Flow is the runtime injection layer for your existing secrets store. Your developers ask the AI to set up Google OAuth (or Stripe, or any integration). The AI calls Flow. Credentials appear in your app's `process.env` at boot — fetched in memory from the secrets store you already trust, never written to a `.env` file, never pasted into chat. Same experience in development and production. No migration. No new attack surface.
 
-The problem Flow solves: integration setup is the wall every AI-built project hits. Reading provider docs, juggling consoles, copy-pasting secrets, fixing leaked-key incidents — it interrupts your conversation with Claude and costs 20–30 minutes of context to recover. Flow absorbs that interruption.
+The problem Flow solves: integration setup is the wall every AI-built project hits. Reading provider docs, juggling consoles, copy-pasting secrets, fixing leaked-key incidents — it interrupts your conversation with the AI and costs 20–30 minutes of context to recover. Flow absorbs that interruption *without* asking you to relocate your secrets.
 
-How it works: a hosted MCP server holds Flow's shared development credentials and your stored production credentials. A small Node preload (`flow-vault`) fetches them at app boot and exposes them through `process.env` — your application code is unchanged. Claude Code calls Flow's MCP tools to write to the vault on your behalf when an integration is needed.
+## How it works — the source adapter pattern
+
+Flow has two pieces: an IDE conversation layer (MCP tools the AI calls) and a runtime injection layer (`flow-vault`, a Node `--require` preload). The runtime fetches credentials from a *source adapter* and exposes them through `process.env`. Your application code is unchanged.
+
+The source adapter is pluggable. In development, it points at Flow's hosted vault — a shared sandbox that lets developers start coding integrations before they have real credentials. In production, it points at the secrets store you already operate.
+
+```
+Dev                                        Production
+┌──────────────────────┐                   ┌──────────────────────┐
+│ flow-vault preload   │                   │ flow-vault preload   │
+│   ↓ source: hosted   │                   │   ↓ source: aws-sm   │
+│ Flow shared vault    │                   │ AWS Secrets Manager  │
+│ (sandbox creds)      │                   │ (your prod creds)    │
+└──────────┬───────────┘                   └──────────┬───────────┘
+           ↓                                          ↓
+        process.env                               process.env
+        (in memory)                               (in memory)
+           ↓                                          ↓
+        your app                                  your app
+```
+
+Same runtime, same `process.env.GOOGLE_CLIENT_ID`, same application code. The only thing that changes between environments is where the credential map comes from.
+
+## How Flow compares to a secrets store
+
+Flow does not replace AWS Secrets Manager, HashiCorp Vault, Azure Key Vault, or GCP Secret Manager. Flow runs *on top* of them.
+
+| Concern | A secrets store | Flow |
+|---|---|---|
+| Where production credentials live | In the store | In the store (Flow does not move them) |
+| Authentication to the store | Whatever the store requires | Adapter passes through (OIDC, IAM, token, etc.) |
+| What touches your app's filesystem | Nothing (with proper config) | Nothing |
+| What developers touch in dev | Manual fetch / sync scripts | One sentence to the AI |
+| What developers touch in prod | Console, CLI, or platform integration | The same `process.env.X` they used in dev |
+| Compliance posture | Defined by the store + your IAM | Inherits the store's posture; adds a manifest of which keys each project requests |
+
+Flow is additive. If you already run a secrets store, Flow makes its credentials reach your app the way your developers already expect. If you don't yet, Flow's hosted source gives you a place to start before you stand one up.
 
 ## Status
 
-Pre-release. Live: hosted vault + runtime package on npm + MCP tools for both Google OAuth and Resend (email) in development (`flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` alias, `flow_status_check`). Vault endpoint is rate-limited (per-IP and per-install_id). Coming: production credential intake (`flow_capture`, `flow_setup_provider(production)`), more providers (Stripe, Twilio), `flow login` CLI for keychain session. See `CLAUDE.md` for the full roadmap.
+Pre-release. Live: hosted vault + runtime package on npm + MCP tools for both Google OAuth and Resend (email) in development (`flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` alias, `flow_status_check`). Vault endpoint is rate-limited (per-IP and per-install_id). Coming: production credential intake (`flow_capture`, `flow_setup_provider(production)`), additional source adapters (AWS Secrets Manager, HashiCorp Vault, Azure Key Vault, GCP Secret Manager), more providers (Stripe, Twilio), `flow login` CLI for keychain session. See `CLAUDE.md` for the full roadmap.
+
+The hosted source adapter is the only one shipped today. Other adapters are planned and documented at [docs/source-adapters.md](docs/source-adapters.md).
 
 ## Quick start (works in any MCP-capable AI tool)
 
@@ -43,7 +81,7 @@ Create the file if it doesn't exist. Restart your AI tool. Approve the trust pro
 Use Flow to set up Google OAuth for development.
 ```
 
-The AI calls Flow's MCP tools (`flow_check` → `flow_setup_oauth`), installs `flow-vault` into your project, wraps your dev script with `--require=flow-vault`, and tells you to restart your dev server. Your app reads `process.env.GOOGLE_CLIENT_ID` as normal — the value comes from Flow's vault, not from any `.env` file.
+The AI calls Flow's MCP tools (`flow_check` → `flow_setup_oauth`), installs `flow-vault` into your project, wraps your dev script with `--require=flow-vault`, and tells you to restart your dev server. Your app reads `process.env.GOOGLE_CLIENT_ID` as normal — the value comes from Flow's hosted source, not from any `.env` file.
 
 ### Quick start — Claude Code CLI users (alternative)
 
@@ -70,28 +108,14 @@ node -e "require('flow-vault/keychain').storeSession('<install-id>')"
 
 The `flow login` CLI in v0.2 will replace this with a one-time GitHub login.
 
-## How it works
+## Components
 
-Three components, each independent:
-
-```
-┌─────────────────────┐
-│ flow-cli            │  Stores a session token in your OS keychain.
-│ (planned)           │  Runs once per machine.
-└─────────────────────┘
-
-┌─────────────────────┐
-│ Flow MCP server     │  Hosted at mcp.kindtree.us. Claude calls its tools
-│                     │  to provision and store credentials in the vault.
-└─────────────────────┘
-
-┌─────────────────────┐
-│ flow-vault runtime  │  Node --require preload. Fetches vault at boot,
-│                     │  injects into process.env, your app code is unchanged.
-└─────────────────────┘
-```
-
-You install the plugin once. The runtime ships with each project that uses it. The CLI is a one-time login per machine.
+- **`packages/flow-vault/`** — the npm-publishable runtime preload. Wraps `process.env` via a Proxy. Source-adapter-agnostic. See [packages/flow-vault/README.md](packages/flow-vault/README.md).
+- **`api/mcp.ts`** — the hosted MCP server. Streamable HTTP transport via `mcp-handler`.
+- **`api/vault/credentials.ts`** — the hosted source adapter's read endpoint. Called by `flow-vault` when configured to use the `flow-hosted` source.
+- **`src/lib/storage.ts`** — Upstash Redis KV adapter; vault and state helpers (hosted source only).
+- **`src/lib/playbook.ts`** + **`src/playbooks/`** — playbook engine and definitions.
+- **`plugin/`** — Claude Code plugin manifest. Points the plugin at the hosted MCP URL.
 
 ## What Flow manages
 
@@ -105,16 +129,7 @@ You install the plugin once. The runtime ships with each project that uses it. T
 | Realtime | `realtime_provider` (planned) | Planned (v0.2) | Likely Pusher; 16% of repos, no existing tooling |
 | SMS | `sms_provider` (planned) | Planned (v0.3+) | Likely Twilio |
 
-Flow only ships an integration when its playbook is verified end-to-end against the provider's current console UI. Production credential intake (`flow_capture`, `flow_setup_provider(production)`) is M2.5 — until then, all live integrations work for development only.
-
-## Components
-
-- **`packages/flow-vault/`** — the npm-publishable runtime preload. See [packages/flow-vault/README.md](packages/flow-vault/README.md).
-- **`api/mcp.ts`** — the hosted MCP server. Streamable HTTP transport via `mcp-handler`.
-- **`api/vault/credentials.ts`** — vault read endpoint. Called by `flow-vault` at boot.
-- **`src/lib/storage.ts`** — Upstash Redis KV adapter; vault and state helpers.
-- **`src/lib/playbook.ts`** + **`src/playbooks/`** — playbook engine and definitions.
-- **`plugin/`** — Claude Code plugin manifest. Points the plugin at the hosted MCP URL.
+Flow only ships an integration when its playbook is verified end-to-end against the provider's current console UI. Production credential intake (`flow_capture`, `flow_setup_provider(production)`) is v0.2 work — until then, all live integrations work for development only.
 
 ## Available MCP tools
 
@@ -125,36 +140,43 @@ Flow only ships an integration when its playbook is verified end-to-end against 
 | `flow_status` | ✅ live | Verbose project health |
 | `flow_setup_provider(development)` | ✅ live | Generic — accepts `provider="google-oauth-web"` or `provider="email_provider"`. Stores shared dev creds in vault, returns runtime install instructions |
 | `flow_setup_oauth(development)` | ✅ live (alias) | Backward-compat alias for `flow_setup_provider(provider="google-oauth-web")` |
-| `flow_setup_provider(production)` | ⏳ planned (M2.5) | Returns "coming soon" today |
-| `flow_capture` | ⏳ planned (M2.5) | Will extract creds from a downloaded provider JSON Claude reads via its Read tool |
+| `flow_setup_provider(production)` | ⏳ planned (v0.2) | Returns "coming soon" today |
+| `flow_capture` | ⏳ planned (v0.2) | Will extract creds from a downloaded provider JSON the AI reads via its Read tool |
 | `flow_sync` | ❌ deprecated | Runtime injection makes env-push obsolete; Flow delivers at app boot, no per-environment push needed |
 
-## Security model
+## Trust model — two kinds of credentials
 
-Two kinds of credentials, very different threat models:
+**Shared development credentials** (one OAuth client, used by every Flow user). Live only on Flow's hosted infrastructure. Returned by the hosted source adapter only when `env=development`. Limited to `openid email profile` scope. Equivalent to test-mode keys: anyone can use them, abuse traces back to Flow's project, kill-switch is rotate + new vault response.
 
-**Shared development credentials** (one OAuth client, used by every Flow user). Live only on Flow's hosted infrastructure (Vercel env). Returned only when `env=development`. Limited to `openid email profile` scope. Equivalent to Stripe test-mode keys: anyone can use them, abuse traces back to Flow's GCP project, kill-switch is rotate + new vault response.
+**Your production credentials** (per-tenant, real secrets). Stay in whichever source adapter you point the runtime at. With the hosted source: Flow stores them in its KV under your install + project + `production`. With AWS / Vault / Azure / GCP source adapters: Flow never sees the values — the runtime authenticates to *your* store using *your* IAM. Either way: never on your filesystem, never in your `.env`, never echoed in chat. Full threat model in [packages/flow-vault/SECURITY.md](packages/flow-vault/SECURITY.md).
 
-**Your production credentials** (per-user, real secrets). You create them in your own provider console. Flow captures and stores them in vault under your project + `production` environment. Returned only with your session. Never on your filesystem. Never in your `.env` files. Never echoed in chat. Full detail: [packages/flow-vault/SECURITY.md](packages/flow-vault/SECURITY.md).
+For why this distinction matters architecturally — the difference between Flow holding your secrets and Flow injecting from a store you operate — see [docs/source-adapters.md](docs/source-adapters.md#why-ownership-matters-in-production).
 
 ## Development vs production
 
-| Mode | Where creds come from | What you do |
-|---|---|---|
-| Development | Flow's shared dev credentials | Nothing. They're served by the vault automatically. |
-| Production | Your own credentials, captured into vault | One console visit guided by Flow; Flow stores and serves from then on. |
+| Mode | Source adapter | Where creds come from | What you do |
+|---|---|---|---|
+| Development | `flow-hosted` | Flow's shared dev sandbox | Nothing. They're served by the vault automatically. |
+| Production (hosted) | `flow-hosted` | Your project's vault entry | One console visit guided by the AI; Flow stores and serves from then on. |
+| Production (your store) | `aws-secrets-manager` / `hashicorp-vault` / `azure-key-vault` / `gcp-secret-manager` (planned) | Your own secrets store | Authenticate the runtime via your existing IAM (OIDC preferred). Flow only injects. |
+
+## Compliance
+
+Flow produces a per-project manifest at `.flow/integrations.json` describing which keys each project expects from which source — no secret values, just shape. The manifest is committed to your repo, reviewable in PRs, and machine-readable for audits. See [docs/compliance.md](docs/compliance.md).
 
 ## Roadmap
 
-- **v0.1** (now): Hosted vault + flow-vault runtime live. Google OAuth playbook ready. MCP tool wiring in progress.
-- **v0.2**: Tool wiring complete. Stripe + Auth0 + AWS S3 + Pusher playbooks. CLI for `flow login`.
-- **v0.3**: Twilio, Resend, SendGrid. Marketplace listing in `anthropics/claude-plugins-community`.
-- **v1**: Credential lifecycle (`flow_rotate`, `flow_revoke`, `flow_audit`). Microsite.
+- **v0.1** (now): Hosted source adapter + flow-vault runtime live. Google OAuth + Resend playbooks ready. MCP tool wiring shipped for development.
+- **v0.2**: Production credential intake (`flow_capture`). First non-hosted source adapter (AWS Secrets Manager via OIDC federation). Stripe + Auth0 + AWS S3 + Pusher playbooks. CLI for `flow login`.
+- **v0.3**: HashiCorp Vault, Azure Key Vault, GCP Secret Manager source adapters. Twilio, Resend, SendGrid playbooks. Marketplace listing in `anthropics/claude-plugins-community`.
+- **v1**: Credential lifecycle (`flow_rotate`, `flow_revoke`, `flow_audit`). Compliance manifest tooling. Microsite.
 - **v2+**: Agent credential broker — scoped JIT credentials issued to AI agents per task with auto-revoke.
 
 ## Contributing
 
 Playbook contributions welcome once the schema stabilizes. The current playbook lives at `src/playbooks/google-oauth-web.json` and demonstrates the format: 8 steps, library variants, blocking warnings, common errors. Schema reference and contribution guide will land at `docs/playbooks.md` once playbook v2 schema is finalized.
+
+Source adapter contributions welcome once the adapter interface is finalized. Today the runtime hard-codes the hosted source; the abstraction lands in v0.2.
 
 ## License
 

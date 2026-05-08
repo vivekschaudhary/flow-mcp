@@ -109,21 +109,62 @@ flow status
 
 ## Production setup
 
-When you're ready to deploy:
+Production has a different question: where should your real credentials *live*?
 
+Flow does not require you to relocate them. The `flow-vault` runtime takes a *source adapter* — a small module that authenticates to a secrets store and returns the credential map. Same Proxy, same `process.env.X`, same application code as in development. The only thing that changes is which source the adapter points at.
+
+### The source choice — one short conversation with whoever owns secrets
+
+Before you flip a project to production, the AI walks through three questions. The answers come from whoever owns secrets in your org (you, if you're solo; SRE / platform team, if you're not).
+
+> **1. Where do production credentials live today?**
+> AWS Secrets Manager, HashiCorp Vault, Azure Key Vault, GCP Secret Manager, a homegrown system, or "nowhere yet — we just use platform env vars."
+>
+> **2. How does compute authenticate to that store?**
+> OIDC federation, IAM role, service account, Vault token, managed identity, etc. We want the *existing* answer here — Flow inherits it, doesn't replace it.
+>
+> **3. Which environments need scoping?**
+> Typically `production` and `preview` (or `staging`). The adapter passes the detected environment to the store so each environment resolves to a separate scope / path / namespace.
+
+The output of this conversation is one file in your repo: `.flow/integrations.json`. It lists which keys each project requests and which source adapter resolves them. **No secret values.** Just shape — the same shape your AI tools already see when reasoning about the project.
+
+```jsonc
+{
+  "project": "swing-trading-signals",
+  "environments": {
+    "development": {
+      "source": "flow-hosted",
+      "integrations": ["google-oauth-web", "email_provider"]
+    },
+    "production": {
+      "source": "aws-secrets-manager",
+      "config": {
+        "auth": "oidc",
+        "region": "us-east-1",
+        "secret_path_prefix": "prod/swing-trading-signals/"
+      },
+      "integrations": ["google-oauth-web", "email_provider", "payments_provider"]
+    }
+  }
+}
 ```
-You: Set up Google OAuth for production.
-```
 
-What Claude does:
+This file is the compliance artifact: it's in version control, every change is a PR, and an auditor can read it without grepping code. Detail at [docs/compliance.md](./compliance.md).
 
-1. Calls `flow_setup_oauth(environment: "production")`. Flow returns a deep link to GCP console pre-filled with everything: project name, redirect URIs (your prod domain, captured from your `vercel.json`), the right OAuth client type.
-2. You click the link, click through the console (one visit, ~3 minutes), download the `client_secret_*.json`.
-3. You tell Claude where it is. Claude reads it (via its built-in Read tool) and calls `flow_capture(json_content="...")`.
-4. Flow extracts the `client_id` and `client_secret`, stores them in vault under `vault:<your-install>:<your-project>:production`.
-5. Claude tells you to delete the JSON from `~/Downloads`.
+### Today vs the target
 
-That's the only console visit, ever. Future credential rotation: Flow stores the new values; your deployed app picks them up on next deploy or function invocation.
+The `flow-hosted` source adapter is the only one shipped today. The AWS / Vault / Azure / GCP adapters and the manifest-driven config are v0.2 work. If you need production *right now* and you're a small team, the hosted source can hold your production credentials too — same trust model as the dev sandbox, scoped per install + project + `production`. The path forward is the same regardless: when an external source adapter ships for your store, change one field in the manifest, redeploy, and your app code doesn't move.
+
+### What happens at runtime
+
+The runtime resolves the source per environment. In production, on app boot:
+
+1. flow-vault detects the environment (`VERCEL_ENV` / `NODE_ENV` / default `development`).
+2. Reads `.flow/integrations.json` to find the source adapter for that environment.
+3. The adapter authenticates to the configured store using whatever IAM your compute already has — Flow does not introduce a new identity.
+4. Adapter returns the credential map. Runtime wraps `process.env`. Your app reads `process.env.GOOGLE_CLIENT_ID` and the value is there.
+
+When you use a non-hosted source: **Flow's infrastructure is not on the request path in production.** Your compute talks directly to your secrets store; Flow ships the runtime that authenticates and injects.
 
 ## Common questions
 
@@ -137,19 +178,21 @@ Partially. CI/CD environments don't have your OS keychain, so the session-token 
 Set them in `.env` (or your platform's env vars). Flow's Proxy returns the developer's value before consulting the vault. You can mix-and-match: Stripe creds from Flow, your own custom API key from your own env. Flow only fills the empty slots.
 
 **Does Flow work in production?**
-Yes. The same `flow-vault` preload runs in your deployed function/server. The production environment fetches your stored production creds from the vault, scoped to your install + project + `production`. The shared dev creds are never returned for `env=production` — that's an explicit guardrail.
+Yes. The same `flow-vault` preload runs in your deployed function/server. The production environment uses whichever source adapter you've configured in `.flow/integrations.json` — the hosted source today, or your own AWS / Vault / Azure / GCP store once those adapters ship in v0.2 / v0.3. The shared dev creds are never returned for `env=production` — that's an explicit guardrail in the hosted source.
 
 **What if Flow goes down?**
 Your app boots normally. The preload prints one warning to stderr and skips the wrap. Reads of `process.env.GOOGLE_CLIENT_ID` return whatever's in your real env (likely undefined for vault-managed keys). Your auth flow returns "not configured" until Flow is back. **Flow is a soft dependency by design.**
 
 **Where does Flow store my production credentials?**
-Upstash Redis, behind Vercel-managed networking, accessed only via the vault endpoint with bearer auth. Your install token is the only key to your stored creds. See [packages/flow-vault/SECURITY.md](../packages/flow-vault/SECURITY.md) for the full threat model.
+Wherever you point the source adapter. With the hosted source: in Flow's KV (Upstash Redis behind Vercel-managed networking), scoped to your install + project + `production`, accessed only via the vault endpoint with bearer auth. With a non-hosted source (AWS / Vault / Azure / GCP, planned v0.2+): **Flow never sees the values** — the runtime authenticates to your store using your IAM, fetches directly, and injects in-memory. Either way no credential touches your filesystem. See [packages/flow-vault/SECURITY.md](../packages/flow-vault/SECURITY.md) for the threat model and [docs/source-adapters.md](./source-adapters.md) for adapter-specific detail.
 
 **What does it cost?**
 Free during pre-release. Pricing TBD post-launch — likely free tier per developer, paid for organizations and high-volume use.
 
 ## Where to next
 
+- Source adapter pattern (the architectural backbone): [docs/source-adapters.md](./source-adapters.md)
+- Compliance manifest (`.flow/integrations.json` as audit artifact): [docs/compliance.md](./compliance.md)
 - Full security model: [packages/flow-vault/SECURITY.md](../packages/flow-vault/SECURITY.md)
 - Playbook reference: [docs/playbooks.md](./playbooks.md)
 - Runtime details: [packages/flow-vault/README.md](../packages/flow-vault/README.md)

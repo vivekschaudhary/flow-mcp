@@ -1,10 +1,10 @@
 ---
-description: Use Flow when the developer asks for help setting up Google OAuth in development OR asks about Flow's status / what Flow can do. Currently Flow handles Google OAuth dev setup end-to-end (stores Flow's shared dev credentials in a hosted vault, instructs you to install the flow-vault Node preload, and after that the developer's app reads process.env.GOOGLE_CLIENT_ID transparently with no .env line). For other integrations (Stripe, Twilio, prod OAuth, credential capture from JSON), tell the developer the tool is planned but not yet live — do not invent behavior.
+description: Use Flow when the developer asks for help setting up Google OAuth (sign-in) or transactional email (Resend) in development, OR for production setup of any integration, OR asks about Flow's status / what Flow can do. Two providers are live for development — `google-oauth-web` and `email_provider` (Resend under the hood). Both store Flow's shared dev credentials in a hosted vault and instruct you to install the flow-vault Node preload; after that the developer's app reads the relevant `process.env` variables transparently with no .env lines. For PRODUCTION setup of any integration, call `flow_setup_production`, which redirects the developer to the flow CLI in their terminal — production credential entry is a CLI workflow by design (hidden input, audit trail, scriptability), not a chat workflow. The CLI itself ships in v0.2; until then the redirect explains that production support is upcoming. For other integrations (Stripe, Twilio, Auth0, AWS S3, Pusher, credential capture from JSON), tell the developer the tool is planned but not yet live — do not invent behavior.
 ---
 
 # Flow — integration agent
 
-Flow is a hosted credential vault and Claude Code plugin. Today it handles Google OAuth for development end-to-end. Other integrations (production OAuth, Stripe, Twilio, etc.) are planned but not live yet — be honest about that.
+Flow is a hosted credential vault that any MCP-capable IDE can call (Claude Code, Cursor, Windsurf, VS Code with MCP-enabled Copilot). Today **two providers are live for development**: `google-oauth-web` (Google sign-in) and `email_provider` (transactional email via Resend). Other integrations (production OAuth, Stripe, Twilio, Auth0, AWS S3, Pusher, etc.) are planned but not live yet — be honest about that.
 
 ## Live tools (only these — anything else returns "method not found")
 
@@ -13,8 +13,9 @@ Flow is a hosted credential vault and Claude Code plugin. Today it handles Googl
 | `flow_status_check` | Connectivity probe. Returns server build state. |
 | `flow_check` | Read project + integration status from Flow's hosted vault. |
 | `flow_status` | Verbose project health. |
-| `flow_setup_provider` | **Generic, dev only.** Set up any registered provider (`google-oauth-web`, `resend`, more coming) by storing dev creds in vault and returning runtime install instructions. Production environment returns "coming soon." |
+| `flow_setup_provider` | **Generic, dev only.** Set up any registered provider (`google-oauth-web`, `email_provider`, more coming) by storing dev creds in vault and returning runtime install instructions. Production environment returns "coming soon." |
 | `flow_setup_oauth` | Backward-compat alias. Equivalent to `flow_setup_provider(provider="google-oauth-web")`. New code should call `flow_setup_provider` directly. |
+| `flow_setup_production` | **Redirector to the flow CLI.** Returns the directive to run `flow setup production --integration <id>` in the terminal. Does NOT perform setup. The CLI is the canonical interface for production credential work; this tool just points there. The CLI itself ships in v0.2 — until then, the response tells the developer production setup is not yet available. |
 
 ## When to invoke proactively
 
@@ -26,8 +27,18 @@ Flow is a hosted credential vault and Claude Code plugin. Today it handles Googl
 ## When NOT to invoke
 
 - Developer asks for **payments / Stripe / SMS / Twilio / push / Pusher / Auth0** integration — no provider slot registered yet. Tell them: "Flow plans to add a `payments_provider` / `sms_provider` slot in v0.2 / v0.3, but it isn't live yet. For now, set it up the normal way." Do not call `flow_setup_provider` with a provider id not in the live list (`google-oauth-web`, `email_provider`).
-- Developer asks for **production setup** of any provider — `flow_setup_provider(environment="production")` returns "coming soon" today. Tell them: "Production setup is the next milestone. Use Flow for dev; configure prod normally for now and migrate later."
-- Developer asks for **credential rotation, revocation, or audit** — also planned but not live.
+- Developer asks for **credential rotation, revocation, or audit** — planned for v1.1, not live yet.
+
+## Production setup — call `flow_setup_production`, then stop
+
+When the developer asks for **production setup** of any integration (e.g. "set up Google OAuth for production", "configure Stripe in prod", "wire up production credentials"):
+
+1. Call `flow_setup_production(install_id, project_name, integration="<provider>")` — note the `integration` argument is free-form, the CLI validates it.
+2. Relay the directive verbatim. The tool returns a message telling the developer to run `flow setup production --integration <id>` in their terminal.
+3. **Stop.** Do NOT try to walk them through production setup conversationally. Do NOT ask them for AWS access keys, secret values, or any credential. Production credential entry is a CLI workflow by design — hidden input, shell history audit trail, scriptability — and the MCP tool's whole purpose is to direct the developer there.
+4. The CLI ships in v0.2 (currently in active development). If the developer doesn't have `flow` on their PATH yet, the tool's response says so — in that case, offer to set up the development environment with `flow_setup_provider(environment="development")` instead, and let them know production support is the next release.
+
+This is the architectural commitment: the CLI is canonical for production work, MCP is a redirector. Same logic, single implementation. Don't try to recreate the CLI's flow inside chat.
 
 ## How to call (the canonical flow for Google OAuth dev setup)
 

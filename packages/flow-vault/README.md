@@ -1,24 +1,58 @@
 # flow-vault
 
-A tiny Node preload that fills empty `process.env` reads from a hosted credential vault. Your app keeps reading `process.env.GOOGLE_CLIENT_ID` like normal — flow-vault makes the value appear without anything ever being written to disk.
+A tiny Node preload that fills empty `process.env` reads from a pluggable credential source — Flow's hosted sandbox in dev, your existing secrets store (AWS / Vault / Azure / GCP, planned) in production. Your app keeps reading `process.env.GOOGLE_CLIENT_ID` like normal — flow-vault makes the value appear without anything ever being written to disk.
 
 ## How it works
 
 ```
 npm run dev
   → flow-vault loads via --require
-  → reads session token from your OS keychain
-  → identifies project from package.json name
-  → fetches credential map from mcp.kindtree.us/api/vault/credentials
+  → resolves the configured source adapter
+  → adapter authenticates and fetches the credential map
   → wraps process.env with a Proxy
-  → your app starts; empty env reads now resolve from the vault
+  → your app starts; empty env reads now resolve from the source
 ```
 
 Cached in process memory for the lifetime of the Node process. One fetch per cold start.
 
+## Source adapters
+
+flow-vault is the injection layer. *Where* the credential map comes from is the source adapter — a small module that authenticates to a secrets store and returns `Record<string, string>`. The runtime is otherwise identical across sources.
+
+The adapter interface (planned, v0.2):
+
+```ts
+interface SourceAdapter {
+  // Identifier the runtime resolves at boot, e.g. "flow-hosted", "aws-secrets-manager".
+  readonly id: string;
+
+  // Called once at preload. Synchronous from the runtime's perspective —
+  // adapters that need async I/O bridge it via execFileSync the same way
+  // the hosted adapter does today.
+  fetch(opts: {
+    project: string;     // from package.json name
+    environment: string; // "development" | "preview" | "production"
+  }): Record<string, string>;
+}
+```
+
+Planned adapters and their authentication models:
+
+| Adapter id | Source | Authentication | Status |
+|---|---|---|---|
+| `flow-hosted` | Flow's hosted vault | Bearer token from OS keychain | ✅ shipped (the only source today) |
+| `aws-secrets-manager` | AWS Secrets Manager | OIDC federation preferred (no long-lived creds); IAM access keys fallback | Planned v0.2 |
+| `hashicorp-vault` | HashiCorp Vault | Vault token or AppRole | Planned v0.3 |
+| `azure-key-vault` | Azure Key Vault | Managed identity or service principal | Planned v0.3 |
+| `gcp-secret-manager` | GCP Secret Manager | Workload Identity or service account | Planned v0.3 |
+
+All non-hosted adapters share one property: **Flow never sees your production credential values**. The runtime authenticates to your store using your IAM, fetches the map directly, and injects it into your process. Flow's hosted infrastructure is not on the request path.
+
+Full pattern, per-adapter authentication detail, and the architectural rationale for keeping ownership with the customer's existing store: [docs/source-adapters.md](../../docs/source-adapters.md).
+
 ## Status
 
-Pre-release. Published to npm as `flow-vault@0.1.0`. The `flow login` CLI for keychain session management is planned (today, store the session manually with a small Node snippet — see "Manual session" below).
+Pre-release. Published to npm as `flow-vault@0.1.0`. Today the runtime is hard-wired to the `flow-hosted` source adapter; the pluggable adapter interface lands in v0.2 alongside the AWS Secrets Manager adapter. The `flow login` CLI for keychain session management is planned (today, store the session manually with a small Node snippet — see "Manual session" below).
 
 ## Installation
 
@@ -117,7 +151,7 @@ Detects environment in this order:
 2. `process.env.NODE_ENV` if set to `production` or `test`
 3. Default: `development`
 
-The vault returns different credentials per environment — for example, `development` includes Flow's shared dev credentials as a fallback; `production` returns only what you've explicitly stored.
+The detected environment is passed to the source adapter so it can scope which credentials to return. With the hosted source: `development` includes Flow's shared dev credentials as a fallback; `production` returns only what you've explicitly stored. With other sources: the environment maps to a path / namespace / scope inside your secrets store (e.g. `prod/myapp/*` in AWS Secrets Manager).
 
 ## Uninstall
 
