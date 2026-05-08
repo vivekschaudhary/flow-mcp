@@ -99,7 +99,7 @@ For non-hosted production sources, **Flow's infrastructure is not on the request
 
 | Layer | Status | Detail |
 |---|---|---|
-| Hosted MCP server at `mcp.kindtree.us/api/mcp` | ✅ deployed | 6 tools live: `flow_status_check`, `flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` (alias), `flow_setup_production` (CLI redirector — see "Production setup" section below) |
+| Hosted MCP server at `mcp.kindtree.us/api/mcp` | ✅ deployed | Live tools: `flow_status_check`, `flow_check`, `flow_status`, `flow_setup_provider`, `flow_setup_oauth` (alias), `flow_setup_production` (CLI redirector — see "Production setup" section below). Authoritative list is the `server.tool(...)` registrations in `api/mcp.ts`. |
 | Vault endpoint at `mcp.kindtree.us/api/vault/credentials` | ✅ deployed | GET; scopes shared dev creds to providers the project has configured; rate-limited per-IP and per-install_id |
 | Upstash Redis (KV) | ✅ provisioned | State + vault entries persist across functions |
 | `flow-vault@0.1.0` on npm | ✅ published | Public; `npm install --save-dev flow-vault` works for anyone |
@@ -321,7 +321,7 @@ Every developer using AI to build software hits the same wall — the code write
 
 ## Notes for Claude when this file is loaded
 
-- The hosted MCP server now exposes 5 tools (see Live surface table above). Use `flow_setup_provider` for new provider setup; `flow_setup_oauth` is a backward-compat alias for the Google OAuth case.
+- The hosted MCP server's live tools are listed in the Live surface table above; the authoritative source is the `server.tool(...)` registrations in `api/mcp.ts` (do not rely on a hardcoded tool count anywhere in this file). Use `flow_setup_provider` for new dev provider setup; `flow_setup_oauth` is a backward-compat alias for the Google OAuth case; `flow_setup_production` is a redirector to the CLI.
 - `flow_capture`, `flow_sync`, `flow_setup`, `flow_setup_provider(production)`, and `flow_setup_production` are NOT live (v0.2 / deprecated). If you call them you'll get "method not found" or a "coming soon" reply.
 - The `flow-vault` runtime is on npm and verified end-to-end against **one real app to date — `swing-trading-signals`** (Google OAuth dev → working `process.env.GOOGLE_CLIENT_ID` in a Next.js app). Coverage broadens as additional installs land through v0.2 (early-access friends-of-Vivek). Today the runtime is hard-wired to the hosted source adapter; the pluggable adapter interface lands in v0.2. *In external-facing docs (README, marketing), keep this anonymized as "one Next.js app" — `swing-trading-signals` is internal-only until we decide on a public reference.*
 - Adding a new provider = one entry in `src/lib/providers.ts` + a `FLOW_<...>_*` env var on Vercel. No new MCP tool required.
