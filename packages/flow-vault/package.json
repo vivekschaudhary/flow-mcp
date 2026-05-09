@@ -1,7 +1,7 @@
 {
   "name": "flow-vault",
-  "version": "0.1.0",
-  "description": "Invisible credential injection into process.env at runtime. Loaded via node --require. Zero credentials on disk.",
+  "version": "0.2.0",
+  "description": "Invisible credential injection into process.env at runtime. Loaded via node --require. Zero credentials on disk. v0.2: reads .flow/integrations.json (written by flow-cli) and routes per-integration to the configured source adapter (flow-hosted live; aws-secrets-manager live; HashiCorp Vault / Azure Key Vault / GCP Secret Manager planned).",
   "main": "index.js",
   "type": "commonjs",
   "files": [
@@ -11,13 +11,20 @@
     "vault.js",
     "vault-helper.js",
     "proxy.js",
-    "detect.js"
+    "detect.js",
+    "manifest-reader.js",
+    "adapter-router.js",
+    "aws-resolver.js",
+    "aws-resolver-helper.js"
   ],
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "keytar": "^7.9.0"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.600.0"
   },
   "keywords": [
     "credentials",
